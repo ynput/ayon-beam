@@ -1,5 +1,6 @@
 """AYON Beam addon - Smart caching and entity-centric API."""
 from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -32,7 +33,6 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
     def initialize(self, settings: dict[str, Any]):
         """Initialize the addon with settings."""
         # This could be called during addon initialization
-        pass
 
     def tray_init(self) -> None:
         """Initialize the tray service."""
@@ -54,7 +54,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
                 logger.warning("Cache service not configured - missing required settings")
 
         except Exception as e:
-            logger.error(f"Failed to initialize Beam addon: {e}")
+            logger.error("Failed to initialize Beam addon: %s", e)
 
     def tray_start(self) -> None:
         """Start the tray service."""
@@ -80,7 +80,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
             logger.info("AYON Beam addon started successfully")
 
         except Exception as e:
-            logger.error(f"Failed to start Beam addon: {e}")
+            logger.error("Failed to start Beam addon: %s", e)
 
     def tray_exit(self) -> None:
         """Stop the tray service."""
@@ -103,7 +103,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
             logger.info("Beam addon stopped")
 
         except Exception as e:
-            logger.error(f"Error stopping Beam addon: {e}")
+            logger.error("Error stopping Beam addon: %s", e)
 
     async def _run_cache_service(self):
         """Run the cache service."""
@@ -115,7 +115,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
         except asyncio.CancelledError:
             logger.info("Cache service task cancelled")
         except Exception as e:
-            logger.error(f"Cache service error: {e}")
+            logger.error("Cache service error: %s", e)
 
     def _get_cache_config(self) -> Optional[CacheServiceConfig]:
         """Get cache service configuration from environment and settings.
@@ -125,44 +125,44 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
         """
         try:
             # Get server connection info from environment
-            server_url = os.getenv('AYON_SERVER_URL')
-            api_key = os.getenv('AYON_API_KEY')
+            server_url = os.getenv("AYON_SERVER_URL")
+            api_key = os.getenv("AYON_API_KEY")
 
             if not server_url or not api_key:
                 logger.error("Missing AYON_SERVER_URL or AYON_API_KEY environment variables")
                 return None
 
             # Get memcached settings from environment
-            memcache_host = os.getenv('BEAM_MEMCACHE_HOST', 'localhost')
-            memcache_port = int(os.getenv('BEAM_MEMCACHE_PORT', '11211'))
+            memcache_host = os.getenv("BEAM_MEMCACHE_HOST", "localhost")
+            memcache_port = int(os.getenv("BEAM_MEMCACHE_PORT", "11211"))
 
             # Get rate limiting settings
             rate_limit_config = RateLimitConfig(
-                requests_per_second=float(os.getenv('BEAM_RATE_LIMIT_RPS', '5.0')),
-                burst_limit=int(os.getenv('BEAM_BURST_LIMIT', '10')),
-                cooldown_period=float(os.getenv('BEAM_COOLDOWN_PERIOD', '60.0')),
-                per_project_limit=float(os.getenv('BEAM_PROJECT_RATE_LIMIT', '2.0'))
+                requests_per_second=float(os.getenv("BEAM_RATE_LIMIT_RPS", "5.0")),
+                burst_limit=int(os.getenv("BEAM_BURST_LIMIT", "10")),
+                cooldown_period=float(os.getenv("BEAM_COOLDOWN_PERIOD", "60.0")),
+                per_project_limit=float(os.getenv("BEAM_PROJECT_RATE_LIMIT", "2.0"))
             )
 
             # Get caching settings
-            default_ttl = int(os.getenv('BEAM_DEFAULT_TTL', '3600'))
-            prefetch_interval = int(os.getenv('BEAM_PREFETCH_INTERVAL', '300'))
-            max_concurrent_fetches = int(os.getenv('BEAM_MAX_CONCURRENT', '5'))
+            default_ttl = int(os.getenv("BEAM_DEFAULT_TTL", "3600"))
+            prefetch_interval = int(os.getenv("BEAM_PREFETCH_INTERVAL", "300"))
+            max_concurrent_fetches = int(os.getenv("BEAM_MAX_CONCURRENT", "5"))
 
             # Get projects and folders to cache from environment
             projects_to_cache = []
             folders_to_cache = {}
 
             # Example: BEAM_PROJECTS="TestProject,AnotherProject"
-            projects_env = os.getenv('BEAM_PROJECTS', '')
+            projects_env = os.getenv("BEAM_PROJECTS", "")
             if projects_env:
-                projects_to_cache = [p.strip() for p in projects_env.split(',') if p.strip()]
+                projects_to_cache = [p.strip() for p in projects_env.split(",") if p.strip()]
 
             # Example: BEAM_FOLDERS_TestProject="folder1,folder2"
             for project in projects_to_cache:
-                folders_env = os.getenv(f'BEAM_FOLDERS_{project}', '')
+                folders_env = os.getenv(f"BEAM_FOLDERS_{project}", "")
                 if folders_env:
-                    folders_to_cache[project] = [f.strip() for f in folders_env.split(',') if f.strip()]
+                    folders_to_cache[project] = [f.strip() for f in folders_env.split(",") if f.strip()]
 
             config = CacheServiceConfig(
                 server_url=server_url,
@@ -181,7 +181,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
             return config
 
         except Exception as e:
-            logger.error(f"Failed to create cache configuration: {e}")
+            logger.error("Failed to create cache configuration: %s", e)
             return None
 
     def get_cache_service(self) -> Optional[CacheService]:
@@ -267,9 +267,8 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
         """
         if self._cache_service:
             return self._cache_service.get_cache_configuration()
-        else:
-            logger.error("Cache service not available")
-            return {}
+        logger.error("Cache service not available")
+        return {}
 
     def add_folders_to_project(self, project_name: str, folder_ids: list[str], replace: bool = False):
         """Add or update folders for a specific project.
@@ -318,7 +317,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
                 try:
                     future.result(timeout=30)
                 except Exception as e:
-                    logger.error(f"Failed to trigger prefetch: {e}")
+                    logger.error("Failed to trigger prefetch: %s", e)
         else:
             logger.error("Cache service not available")
 
@@ -333,6 +332,5 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
         """
         if self._cache_service:
             return self._cache_service.get_project_folders(project_name)
-        else:
-            logger.error("Cache service not available")
-            return []
+        logger.error("Cache service not available")
+        return []

@@ -2,19 +2,17 @@
 
 import asyncio
 import json
+
 from ayon_beam.cache_manager import (
-    CacheService,
-    CacheServiceConfig,
     CacheConfigManager,
     load_cache_config_from_file,
-    update_cache_config_from_env
+    update_cache_config_from_env,
 )
 
 
 # Example 1: Programmatic Configuration
 async def example_programmatic_config():
     """Example of updating cache configuration programmatically."""
-
     # Assuming you have a running cache service
     cache_service = None  # Your cache service instance
 
@@ -56,7 +54,6 @@ async def example_programmatic_config():
 # Example 2: Configuration from JSON File
 async def example_json_config():
     """Example of loading configuration from JSON file."""
-
     # Create configuration file
     config_data = {
         "TestProject": [
@@ -85,7 +82,6 @@ async def example_json_config():
 # Example 3: Configuration Manager with File Watching
 async def example_config_manager():
     """Example using CacheConfigManager for advanced configuration management."""
-
     cache_service = None  # Your cache service instance
 
     # Create configuration manager
@@ -129,7 +125,6 @@ async def example_config_manager():
 # Example 4: Environment Variable Configuration
 def example_env_config():
     """Example of using environment variables for configuration."""
-
     import os
 
     # Set environment variables
@@ -145,7 +140,6 @@ def example_env_config():
 # Example 5: Dynamic Configuration via AYON Addon API
 def example_addon_api():
     """Example of using BeamAddon methods for dynamic configuration."""
-
     # Assuming you have access to the BeamAddon instance
     beam_addon = None  # Your BeamAddon instance
 
@@ -177,7 +171,6 @@ def example_addon_api():
 # Example 6: Configuration File Formats
 def example_config_formats():
     """Examples of different configuration file formats supported."""
-
     # Format 1: Simple project -> folders mapping
     config_format_1 = {
         "TestProject": ["folder1", "folder2"],
@@ -219,7 +212,6 @@ def example_config_formats():
 # Example 7: Real-world Integration Scenario
 async def example_real_world_scenario():
     """Real-world example of dynamic cache configuration."""
-
     cache_service = None  # Your cache service instance
     config_manager = CacheConfigManager(cache_service)
 

@@ -1,7 +1,7 @@
 """Main cache service.
 
- Orchestrates GraphQL fetching, memcached storage, and event handling.
- """
+Orchestrates GraphQL fetching, memcached storage, and event handling.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -280,7 +280,8 @@ class CacheService:
                 )
 
                 success_count = sum(1 for r in results if r is True)
-                logger.debug(f"Prefetch cycle completed: {success_count}/{len(results)} successful")
+                logger.debug("Prefetch cycle completed: "
+                             f"{success_count}/{len(results)} successful")
 
             except asyncio.TimeoutError:
                 logger.warning("Prefetch cycle timed out")
@@ -289,39 +290,42 @@ class CacheService:
                     if not task.done():
                         task.cancel()
 
-    def _handle_invalidation_event(self, event: InvalidationEvent):
+    def _handle_invalidation_event(self, event: InvalidationEvent) -> None:
         """Handle cache invalidation events from WebSocket.
 
         Args:
             event: Invalidation event
         """
-        logger.info(f"Handling invalidation event: {event.event_type} for {event.project_name}")
+        logger.debug("Handling invalidation event: "
+                     f"{event.event_type} for {event.project_name}")
 
         try:
-            if event.event_type == 'folder_updated' and event.folder_id:
+            if event.event_type == "folder_updated" and event.folder_id:
                 # Invalidate specific folder
                 self.memcache_client.invalidate_folder(event.project_name, event.folder_id)
-                self.stats['invalidations'] += 1
+                self.stats["invalidations"] += 1
 
-            elif event.event_type == 'project_updated':
+            elif event.event_type == "project_updated":
                 # Invalidate entire project
                 count = self.memcache_client.invalidate_project(event.project_name)
-                self.stats['invalidations'] += count
+                self.stats["invalidations"] += count
 
-            elif event.event_type == 'entity_deleted' and event.folder_id:
+            elif event.event_type == "entity_deleted" and event.folder_id:
                 # Handle entity deletion - might need to refresh parent folder
                 self.memcache_client.invalidate_folder(event.project_name, event.folder_id)
-                self.stats['invalidations'] += 1
+                self.stats["invalidations"] += 1
 
         except Exception as e:
             logger.error(f"Error handling invalidation event: {e}")
 
-    def add_project_to_cache(self, project_name: str, folder_ids: list[str]):
+    def add_project_to_cache(
+            self, project_name: str, folder_ids: list[str]) -> None:
         """Add a project and its folders to the caching list.
 
         Args:
             project_name: Name of the project
             folder_ids: List of folder IDs to cache
+
         """
         if project_name not in self.config.projects_to_cache:
             self.config.projects_to_cache.append(project_name)
@@ -334,13 +338,16 @@ class CacheService:
             if folder_id not in self.config.folders_to_cache[project_name]:
                 self.config.folders_to_cache[project_name].append(folder_id)
 
-        logger.info(f"Added project {project_name} with {len(folder_ids)} folders to cache")
+        logger.info(
+            f"Added project {project_name} with "
+            f"{len(folder_ids)} folders to cache")
 
-    def remove_project_from_cache(self, project_name: str):
+    def remove_project_from_cache(self, project_name: str) -> None:
         """Remove a project from the caching list and invalidate its cache.
 
         Args:
             project_name: Name of the project to remove
+
         """
         if project_name in self.config.projects_to_cache:
             self.config.projects_to_cache.remove(project_name)
@@ -358,25 +365,39 @@ class CacheService:
 
         Returns:
             Dictionary with service statistics
+
         """
         return {
-            'service_stats': self.stats,
-            'rate_limiter_stats': self.rate_limiter.get_stats(),
-            'memcache_stats': self.memcache_client.get_cache_stats(),
-            'websocket_connected': self.websocket_client.is_connected(),
-            'running': self._running,
-            'configured_projects': len(self.config.projects_to_cache),
-            'configured_folders': sum(len(folders) for folders in self.config.folders_to_cache.values())
+            "service_stats": self.stats,
+            "rate_limiter_stats": self.rate_limiter.get_stats(),
+            "memcache_stats": self.memcache_client.get_cache_stats(),
+            "websocket_connected": self.websocket_client.is_connected(),
+            "running": self._running,
+            "configured_projects": len(self.config.projects_to_cache),
+            "configured_folders": (
+                sum(len(folders)
+                for folders in self.config.folders_to_cache.values())
+            )
         }
 
-    def update_cache_configuration(self, projects_config: dict[str, list[str]]):
+    def update_cache_configuration(
+            self, projects_config: dict[str, list[str]]) -> None:
         """Dynamically update the projects and folders to cache.
 
         Args:
-            projects_config: Dictionary mapping project names to lists of folder IDs
-                            Example: {"Project1": ["folder1", "folder2"], "Project2": ["folder3"]}
+            projects_config: Dictionary mapping project
+                names to lists of folder IDs
+                Example::
+                    {
+                        "Project1": [
+                            "folder1", "folder2"
+                        ], "Project2": ["folder3"]
+                    }
+
         """
-        logger.info(f"Updating cache configuration with {len(projects_config)} projects")
+        logger.info(
+            "Updating cache configuration "
+            f"with {len(projects_config)} projects")
 
         # Update the configuration
         self.config.projects_to_cache = list(projects_config.keys())
@@ -392,13 +413,19 @@ class CacheService:
         """
         return self.config.folders_to_cache.copy()
 
-    def add_folders_to_project(self, project_name: str, folder_ids: list[str], replace: bool = False):
+    def add_folders_to_project(
+            self,
+            project_name: str,
+            folder_ids: list[str],
+            *,
+            replace: bool = False) -> None:
         """Add or update folders for a specific project.
 
         Args:
             project_name: Name of the project
             folder_ids: List of folder IDs to add/set
-            replace: If True, replace existing folders; if False, merge with existing
+            replace: If True, replace existing folders;
+                if False, merge with existing
         """
         if project_name not in self.config.projects_to_cache:
             self.config.projects_to_cache.append(project_name)
@@ -406,23 +433,30 @@ class CacheService:
 
         if replace:
             self.config.folders_to_cache[project_name] = folder_ids.copy()
-            logger.info(f"Replaced folders for {project_name} with {len(folder_ids)} folders")
+            logger.info(
+                f"Replaced folders for {project_name} "
+                f"with {len(folder_ids)} folders")
         else:
             # Merge with existing, avoiding duplicates
             existing = set(self.config.folders_to_cache[project_name])
             new_folders = [fid for fid in folder_ids if fid not in existing]
             self.config.folders_to_cache[project_name].extend(new_folders)
-            logger.info(f"Added {len(new_folders)} new folders to {project_name}")
+            logger.info(
+                f"Added {len(new_folders)} new folders to {project_name}")
 
-    def remove_folders_from_project(self, project_name: str, folder_ids: list[str] = None):
+    def remove_folders_from_project(
+            self, project_name: str,
+            folder_ids: Optional[list[str]] = None) -> None:
         """Remove specific folders or entire project from caching.
 
         Args:
             project_name: Name of the project
-            folder_ids: Specific folder IDs to remove. If None, removes entire project.
+            folder_ids: Specific folder IDs to remove.
+                If None, removes entire project.
         """
         if project_name not in self.config.folders_to_cache:
-            logger.warning(f"Project {project_name} not found in cache configuration")
+            logger.warning(
+                f"Project {project_name} not found in cache configuration")
             return
 
         if folder_ids is None:
@@ -433,45 +467,58 @@ class CacheService:
 
             # Invalidate cached data for the project
             self.memcache_client.invalidate_project(project_name)
-            logger.info(f"Removed entire project {project_name} from cache configuration")
+            logger.info(
+                "Removed entire project "
+                f"{project_name} from cache configuration")
         else:
             # Remove specific folders
             for folder_id in folder_ids:
                 if folder_id in self.config.folders_to_cache[project_name]:
                     self.config.folders_to_cache[project_name].remove(folder_id)
                     # Invalidate cached data for the specific folder
-                    self.memcache_client.invalidate_folder(project_name, folder_id)
+                    self.memcache_client.invalidate_folder(
+                        project_name, folder_id)
 
             # Remove project if no folders left
             if not self.config.folders_to_cache[project_name]:
                 if project_name in self.config.projects_to_cache:
                     self.config.projects_to_cache.remove(project_name)
                 del self.config.folders_to_cache[project_name]
-                logger.info(f"Removed project {project_name} (no folders remaining)")
+                logger.info(
+                    f"Removed project {project_name} (no folders remaining)")
             else:
-                logger.info(f"Removed {len(folder_ids)} folders from {project_name}")
+                logger.info(
+                    f"Removed {len(folder_ids)} folders from {project_name}")
 
-    async def trigger_immediate_prefetch(self, project_name: str = None, folder_ids: list[str] = None):
+    async def trigger_immediate_prefetch(
+            self,
+            project_name: Optional[str] = None,
+            folder_ids: Optional[list[str]] = None) -> None:
         """Trigger immediate prefetch for specific projects/folders.
 
         Args:
-            project_name: Specific project to prefetch. If None, prefetch all configured.
-            folder_ids: Specific folder IDs to prefetch. If None, prefetch all in project.
+            project_name: Specific project to prefetch.
+                If None, prefetch all configured.
+            folder_ids: Specific folder IDs to prefetch.
+                If None, prefetch all in project.
         """
         logger.info("Triggering immediate prefetch")
 
         if project_name and project_name not in self.config.projects_to_cache:
-            logger.warning(f"Project {project_name} not configured for caching")
+            logger.warning(
+                f"Project {project_name} not configured for caching")
             return
 
         fetch_tasks = []
 
         if project_name:
             # Prefetch specific project
-            target_folders = folder_ids or self.config.folders_to_cache.get(project_name, [])
+            target_folders = folder_ids or self.config.folders_to_cache.get(
+                project_name, [])
 
             for folder_id in target_folders:
-                if folder_id in self.config.folders_to_cache.get(project_name, []):
+                if folder_id in self.config.folders_to_cache.get(
+                        project_name, []):
                     task = asyncio.create_task(
                         self.prefetch_folder_data(project_name, folder_id)
                     )
@@ -479,7 +526,8 @@ class CacheService:
         else:
             # Prefetch all configured projects/folders
             for proj_name in self.config.projects_to_cache:
-                for folder_id in self.config.folders_to_cache.get(proj_name, []):
+                for folder_id in self.config.folders_to_cache.get(
+                        proj_name, []):
                     task = asyncio.create_task(
                         self.prefetch_folder_data(proj_name, folder_id)
                     )
@@ -487,9 +535,12 @@ class CacheService:
 
         if fetch_tasks:
             try:
-                results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                results = await asyncio.gather(
+                    *fetch_tasks, return_exceptions=True)
                 success_count = sum(1 for r in results if r is True)
-                logger.info(f"Immediate prefetch completed: {success_count}/{len(results)} successful")
+                logger.info(
+                    "Immediate prefetch completed: "
+                    f"{success_count}/{len(results)} successful")
             except Exception as e:
                 logger.error(f"Error in immediate prefetch: {e}")
 

@@ -80,7 +80,7 @@ class GraphQLClient:
             server_url: AYON server URL
             api_key: API key for authentication
         """
-        self.server_url = server_url.rstrip('/')
+        self.server_url = server_url.rstrip("/")
         self.api_key = api_key
         self.graphql_endpoint = f"{self.server_url}/graphql"
         self._session: Optional[aiohttp.ClientSession] = None
@@ -98,8 +98,8 @@ class GraphQLClient:
         """Start the HTTP session."""
         if self._session is None:
             headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
             }
             timeout = aiohttp.ClientTimeout(total=30)
             self._session = aiohttp.ClientSession(
@@ -113,7 +113,8 @@ class GraphQLClient:
             await self._session.close()
             self._session = None
 
-    async def execute_query(self, query: GraphQLQuery) -> Optional[dict[str, Any]]:
+    async def execute_query(
+            self, query: GraphQLQuery) -> Optional[dict[str, Any]]:
         """Execute a GraphQL query.
 
         Args:
@@ -121,13 +122,14 @@ class GraphQLClient:
 
         Returns:
             Query response data or None if failed
+
         """
         if not self._session:
             await self.start()
 
         payload = {
-            'query': query.build_query(),
-            'variables': query.get_variables()
+            "query": query.build_query(),
+            "variables": query.get_variables()
         }
 
         try:
@@ -137,14 +139,13 @@ class GraphQLClient:
             ) as response:
                 if response.status == 200:
                     result = await response.json()
-                    if 'errors' in result:
+                    if "errors" in result:
                         logger.error(f"GraphQL errors: {result['errors']}")
                         return None
-                    return result.get('data')
-                else:
-                    logger.error(f"HTTP error {response.status}: "
-                                 f"{await response.text()}")
-                    return None
+                    return result.get("data")
+                logger.error(f"HTTP error {response.status}: "
+                             f"{await response.text()}")
+                return None
 
         except Exception as e:
             logger.error(f"GraphQL query failed: {e}")
@@ -165,7 +166,7 @@ class GraphQLClient:
         query = GraphQLQuery(project_name, folder_id)
         data = await self.execute_query(query)
 
-        if data and 'project' in data and data['project']:
-            return data['project']['folder']
+        if data and "project" in data and data["project"]:
+            return data["project"]["folder"]
 
         return None

@@ -27,24 +27,24 @@ AYON_API_KEY=your-api-key-here
 
 ```bash
 # Memcached configuration
-BEAM_MEMCACHE_HOST=localhost
-BEAM_MEMCACHE_PORT=11211
+AYON_BEAM_MEMCACHE_HOST=localhost
+AYON_BEAM_MEMCACHE_PORT=11211
 
 # Rate limiting
-BEAM_RATE_LIMIT_RPS=5.0          # Requests per second (global)
-BEAM_BURST_LIMIT=10              # Burst limit
-BEAM_COOLDOWN_PERIOD=60.0        # Cooldown after hitting limits (seconds)
-BEAM_PROJECT_RATE_LIMIT=2.0      # Requests per second per project
+AYON_BEAM_RATE_LIMIT_RPS=5.0          # Requests per second (global)
+AYON_BEAM_BURST_LIMIT=10              # Burst limit
+AYON_BEAM_COOLDOWN_PERIOD=60.0        # Cooldown after hitting limits (seconds)
+AYON_BEAM_PROJECT_RATE_LIMIT=2.0      # Requests per second per project
 
 # Caching settings
-BEAM_DEFAULT_TTL=3600            # Default cache TTL (seconds)
-BEAM_PREFETCH_INTERVAL=300       # Pre-fetch interval (seconds)
-BEAM_MAX_CONCURRENT=5            # Max concurrent fetches
+AYON_BEAM_DEFAULT_TTL=3600            # Default cache TTL (seconds)
+AYON_BEAM_PREFETCH_INTERVAL=300       # Pre-fetch interval (seconds)
+AYON_BEAM_MAX_CONCURRENT=5            # Max concurrent fetches
 
 # Projects and folders to cache
-BEAM_PROJECTS=TestProject,AnotherProject
-BEAM_FOLDERS_TestProject=folder_id_1,folder_id_2
-BEAM_FOLDERS_AnotherProject=folder_id_3,folder_id_4
+AYON_BEAM_PROJECTS=TestProject,AnotherProject
+AYON_BEAM_FOLDERS_TestProject=folder_id_1,folder_id_2
+AYON_BEAM_FOLDERS_AnotherProject=folder_id_3,folder_id_4
 ```
 
 ## Usage

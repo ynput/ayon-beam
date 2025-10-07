@@ -1,19 +1,26 @@
 """Dynamic configuration manager for cache service."""
+from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
-import asyncio
-from typing import Dict, List, Optional, Callable, Any
 from pathlib import Path
-from loguru import logger
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
 import aiofiles
 import aiofiles.os
+from loguru import logger
+
+if TYPE_CHECKING:
+    from .cache_service import CacheService
 
 
 class CacheConfigManager:
     """Manager for dynamic cache configuration updates."""
 
-    def __init__(self, cache_service, config_file_path: Optional[str] = None):
+    def __init__(self, cache_service: CacheService,
+                config_file_path: Optional[str] = None):
         """Initialize configuration manager.
 
         Args:
@@ -21,38 +28,49 @@ class CacheConfigManager:
             config_file_path: Optional path to configuration file for persistence
         """
         self.cache_service = cache_service
-        self.config_file_path = config_file_path or "beam_cache_config.json"
-        self._config_watchers: List[Callable[[Dict[str, List[str]]], None]] = []
+        self.config_file_path = (
+            config_file_path or "ayon_beam_cache_config.json"
+        )
+        self._config_watchers: list[Callable[[dict[str, list[str]]], None]] = []
         self._file_watcher_task: Optional[asyncio.Task] = None
         self._last_file_mtime = 0
 
-    def add_config_watcher(self, callback: Callable[[Dict[str, List[str]]], None]):
+    def add_config_watcher(
+            self, callback: Callable[[dict[str, list[str]]], None]) -> None:
         """Add a callback that will be called when configuration changes.
 
         Args:
             callback: Function to call with new configuration
+
         """
         self._config_watchers.append(callback)
 
     def remove_config_watcher(
-            self, callback: Callable[[Dict[str, list[str]]], None]):
+            self, callback: Callable[[dict[str, list[str]]], None]) -> None:
         """Remove a configuration watcher.
 
         Args:
             callback: Function to remove
+
         """
         if callback in self._config_watchers:
             self._config_watchers.remove(callback)
 
-    def _notify_watchers(self, config: Dict[str, List[str]]):
-        """Notify all watchers of configuration changes."""
+    def _notify_watchers(self, config: dict[str, list[str]]) -> None:
+        """Notify all watchers of configuration changes.
+
+        Args:
+            config: New configuration
+
+        """
         for callback in self._config_watchers:
             try:
                 callback(config)
             except Exception as e:
                 logger.error(f"Error in config watcher: {e}")
 
-    async def load_config_from_file(self, file_path: str = None) -> Dict[str, List[str]]:
+    async def load_config_from_file(
+            self, file_path: Optional[Path] = None) -> dict[str, list[str]]:
         """Load configuration from JSON file.
 
         Args:
@@ -60,12 +78,13 @@ class CacheConfigManager:
 
         Returns:
             Configuration dictionary
+
         """
-        file_path = file_path or self.config_file_path
+        file_path = file_path or Path(self.config_file_path)
 
         try:
             if await aiofiles.os.path.exists(file_path):
-                async with aiofiles.open(file_path, 'r') as f:
+                async with aiofiles.open(file_path) as f:
                     content = await f.read()
                     config = json.loads(content)
                     logger.info(f"Loaded configuration from {file_path}")
@@ -75,32 +94,38 @@ class CacheConfigManager:
 
         return {}
 
-    async def save_config_to_file(self, config: Dict[str, List[str]] = None, file_path: str = None):
+    async def save_config_to_file(
+            self,
+            config: Optional[dict[str, list[str]]] = None,
+            file_path: Optional[Path] = None) -> None:
         """Save current configuration to JSON file.
 
         Args:
             config: Configuration to save (uses current if None)
             file_path: Path to save to
+
         """
-        file_path = file_path or self.config_file_path
+        file_path = file_path or Path(self.config_file_path)
         config = config or self.cache_service.get_cache_configuration()
 
         try:
             # Ensure directory exists
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            async with aiofiles.open(file_path, 'w') as f:
+            async with aiofiles.open(file_path, "w") as f:
                 await f.write(json.dumps(config, indent=2))
 
             logger.info(f"Saved configuration to {file_path}")
         except Exception as e:
             logger.error(f"Failed to save config to {file_path}: {e}")
 
-    async def apply_config_from_file(self, file_path: str = None):
+    async def apply_config_from_file(
+            self,file_path: Optional[Path] = None) -> None:
         """Load and apply configuration from file.
 
         Args:
             file_path: Path to configuration file
+
         """
         config = await self.load_config_from_file(file_path)
         if config:
@@ -108,14 +133,17 @@ class CacheConfigManager:
             self._notify_watchers(config)
             await self.cache_service.trigger_immediate_prefetch()
 
-    async def start_file_watcher(self, file_path: str = None, check_interval: int = 5):
+    async def start_file_watcher(
+            self, file_path: Optional[Path] = None,
+            check_interval: int = 5) -> None:
         """Start watching configuration file for changes.
 
         Args:
             file_path: Path to watch
             check_interval: How often to check for changes (seconds)
+
         """
-        file_path = file_path or self.config_file_path
+        file_path = file_path or Path(self.config_file_path)
 
         if self._file_watcher_task:
             logger.warning("File watcher already running")
@@ -126,18 +154,17 @@ class CacheConfigManager:
         )
         logger.info(f"Started watching {file_path} for changes")
 
-    async def stop_file_watcher(self):
+    async def stop_file_watcher(self) -> None:
         """Stop watching configuration file."""
         if self._file_watcher_task:
             self._file_watcher_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._file_watcher_task
-            except asyncio.CancelledError:
-                pass
             self._file_watcher_task = None
             logger.info("Stopped file watcher")
 
-    async def _watch_config_file(self, file_path: str, check_interval: int):
+    async def _watch_config_file(
+            self, file_path: Path, check_interval: int) -> None:
         """Watch configuration file for changes."""
         try:
             while True:
@@ -148,7 +175,9 @@ class CacheConfigManager:
 
                         if mtime != self._last_file_mtime:
                             self._last_file_mtime = mtime
-                            logger.info(f"Configuration file {file_path} changed, reloading...")
+                            logger.info(
+                                f"Configuration file {file_path} changed, "
+                                "reloading...")
                             await self.apply_config_from_file(file_path)
 
                 except Exception as e:
@@ -159,17 +188,21 @@ class CacheConfigManager:
         except asyncio.CancelledError:
             logger.debug("File watcher cancelled")
 
-    def update_config_from_dict(self, config_dict: Dict[str, Any]):
+    def update_config_from_dict(
+            self, config_dict: dict[str, Any]) -> None:
         """Update configuration from various dictionary formats.
+
+        Support multiple formats::
+
+            - Format 1: {"ProjectName": ["folder1", "folder2"]}
+            - Format 2: {"projects": [{"name": "ProjectName", "folders": ["folder1", "folder2"]}]}
+            - Format 3: {"cache_config": {"ProjectName": ["folder1", "folder2"]}}
+
 
         Args:
             config_dict: Configuration in various supported formats
-        """
-        # Support multiple formats:
-        # Format 1: {"ProjectName": ["folder1", "folder2"]}
-        # Format 2: {"projects": [{"name": "ProjectName", "folders": ["folder1", "folder2"]}]}
-        # Format 3: {"cache_config": {"ProjectName": ["folder1", "folder2"]}}
 
+        """
         if "cache_config" in config_dict:
             config = config_dict["cache_config"]
         elif "projects" in config_dict:
@@ -193,15 +226,20 @@ class CacheConfigManager:
                     # Single folder as string
                     validated_config[project_name] = [folders]
                 else:
-                    logger.warning(f"Invalid folders format for project {project_name}")
+                    logger.warning(
+                        f"Invalid folders format for project {project_name}")
 
             self.cache_service.update_cache_configuration(validated_config)
             self._notify_watchers(validated_config)
-            logger.info(f"Updated configuration for {len(validated_config)} projects")
+            logger.info(
+                f"Updated configuration for {len(validated_config)} projects")
         else:
             logger.error("Invalid configuration format")
 
-    async def update_config_from_api(self, api_endpoint: str, headers: Dict[str, str] = None):
+    async def update_config_from_api(
+            self,
+            api_endpoint: str,
+            headers: Optional[dict[str, str]] = None) -> None:
         """Fetch and apply configuration from API endpoint.
 
         Args:
@@ -211,18 +249,21 @@ class CacheConfigManager:
         try:
             import aiohttp
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_endpoint, headers=headers) as response:
-                    if response.status == 200:
-                        config_data = await response.json()
-                        self.update_config_from_dict(config_data)
-                        logger.info(f"Updated configuration from API: {api_endpoint}")
-                    else:
-                        logger.error(f"API request failed: {response.status}")
+            async with (
+                    aiohttp.ClientSession() as session,
+                    session.get(api_endpoint, headers=headers) as response):
+                if response.status == 200:
+                    config_data = await response.json()
+                    self.update_config_from_dict(config_data)
+                    logger.info(
+                        f"Updated configuration from API: {api_endpoint}")
+                else:
+                    logger.error(f"API request failed: {response.status}")
         except Exception as e:
             logger.error(f"Failed to fetch config from API: {e}")
 
-    def update_config_from_env(self, env_prefix: str = "BEAM_CACHE"):
+    def update_config_from_env(
+            self, env_prefix: str = "AYON_BEAM_CACHE") -> None:
         """Update configuration from environment variables.
 
         Args:
@@ -231,14 +272,14 @@ class CacheConfigManager:
         config = {}
 
         # Look for environment variables like:
-        # BEAM_CACHE_PROJECT1=folder1,folder2,folder3
-        # BEAM_CACHE_PROJECT2=folder4,folder5
+        # AYON_BEAM_CACHE_PROJECT1=folder1,folder2,folder3
+        # AYON_BEAM_CACHE_PROJECT2=folder4,folder5
 
         for key, value in os.environ.items():
             if key.startswith(f"{env_prefix}_"):
                 project_name = key[len(f"{env_prefix}_"):]
                 if project_name and value:
-                    folders = [f.strip() for f in value.split(',') if f.strip()]
+                    folders = [f.strip() for f in value.split(",") if f.strip()]
                     config[project_name] = folders
 
         if config:
@@ -250,7 +291,9 @@ class CacheConfigManager:
         else:
             logger.info("No cache configuration found in environment variables")
 
-    async def get_config_suggestions(self, project_name: str) -> List[str]:
+    @staticmethod
+    async def get_config_suggestions(
+            project_name: str) -> list[str]:
         """Get folder suggestions for a project by querying the server.
 
         This could fetch available folders from the GraphQL API to help
@@ -277,7 +320,8 @@ class CacheConfigManager:
 
 
 # Convenience functions for easy configuration management
-async def load_cache_config_from_file(cache_service, file_path: str) -> bool:
+async def load_cache_config_from_file(
+        cache_service: CacheService, file_path: Path) -> bool:
     """Load and apply cache configuration from file.
 
     Args:
@@ -286,6 +330,7 @@ async def load_cache_config_from_file(cache_service, file_path: str) -> bool:
 
     Returns:
         True if successful
+
     """
     manager = CacheConfigManager(cache_service)
     try:
@@ -296,7 +341,9 @@ async def load_cache_config_from_file(cache_service, file_path: str) -> bool:
         return False
 
 
-def update_cache_config_from_env(cache_service, prefix: str = "BEAM_CACHE"):
+def update_cache_config_from_env(
+        cache_service: CacheService,
+        prefix: str = "AYON_BEAM_CACHE") -> None:
     """Update cache configuration from environment variables.
 
     Args:

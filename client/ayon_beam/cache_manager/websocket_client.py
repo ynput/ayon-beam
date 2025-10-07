@@ -1,35 +1,76 @@
-"""WebSocket client for receiving cache invalidation events from AYON server."""
+"""WebSocket client.
+
+Receiving cache invalidation events from AYON server.
+"""
+from __future__ import annotations
 
 import asyncio
 import json
-import logging
-from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
 import websockets
+from loguru import logger
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-
-logger = logging.getLogger(__name__)
+# Position of entity type in topic string
+# e.g., "entity.folder.updated" -> "folder" is at position 2
+ENTITY_STR_POSITION = 2
 
 
 @dataclass
 class InvalidationEvent:
     """Cache invalidation event."""
-    event_type: str  # 'folder_updated', 'project_updated', 'entity_deleted'
+    event_type: str
     project_name: str
-    folder_id: Optional[str] = None
     entity_id: Optional[str] = None
     timestamp: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'InvalidationEvent':
-        """Create event from dictionary."""
+    def _entity_type_from_topic(cls, topic: str) -> str:
+        """Extract entity type from topic string.
+
+        Topic strings are like:
+        - entity.folder.updated
+        - entity.project.updated
+
+        The entity type is the second part (e.g., "folder", "project").
+
+        Args:
+            topic: Topic string from the event.
+
+        Returns:
+            Entity type (e.g., "folder", "project", "task")
+
+        """
+        parts = topic.split(".")
+        if len(parts) >= ENTITY_STR_POSITION:
+            return parts[1]  # e.g., "folder" from "entity.folder.updated"
+        return "unknown"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> InvalidationEvent:
+        """Create event from dictionary.
+
+        Args:
+            data: Dictionary with event data.
+
+        Returns:
+            InvalidationEvent instance
+
+        """
+        entity_type = cls._entity_type_from_topic(data.get("topic", ""))
+        if entity_type == "folder":
+            data["folder_id"] = data["summary"].get("entity_id")
+
+        if entity_type == "task":
+            data["task_id"] = data["summary"].get("entity_id")
+
         return cls(
-            event_type=data.get('event_type', 'unknown'),
-            project_name=data.get('project_name', ''),
-            folder_id=data.get('folder_id'),
-            entity_id=data.get('entity_id'),
-            timestamp=data.get('timestamp')
+            event_type=data.get("topic", ""),
+            project_name=data.get("project", ""),
+            entity_id=data["summary"].get("entity_id"),
+            timestamp=data.get("timestamp")
         )
 
 
@@ -43,54 +84,84 @@ class WebSocketClient:
             server_url: AYON server URL
             api_key: API key for authentication
         """
-        self.server_url = server_url.rstrip('/')
+        self.server_url = server_url.rstrip("/")
         self.api_key = api_key
-        self.ws_url = self.server_url.replace('http://', 'ws://').replace('https://', 'wss://')
-        self.ws_url = f"{self.ws_url}/ws/events"
+        # replace scheme for websocket
+        self.ws_url = self.server_url.replace(
+            "http://", "ws://").replace("https://", "wss://")
+        self.ws_url = f"{self.ws_url}/ws"
 
         self._websocket = None
         self._running = False
         self._reconnect_delay = 5
         self._max_reconnect_delay = 60
-        self._event_handlers: List[Callable[[InvalidationEvent], None]] = []
+        self._event_handlers: list[Callable[[InvalidationEvent], None]] = []
 
-    def add_event_handler(self, handler: Callable[[InvalidationEvent], None]):
+    def add_event_handler(
+            self,
+            handler: Callable[[InvalidationEvent], None]) -> None:
         """Add an event handler for invalidation events.
 
         Args:
             handler: Function to call when an event is received
+
         """
         self._event_handlers.append(handler)
 
-    def remove_event_handler(self, handler: Callable[[InvalidationEvent], None]):
+    def remove_event_handler(
+            self,
+            handler: Callable[[InvalidationEvent], None]) -> None:
         """Remove an event handler.
 
         Args:
             handler: Handler function to remove
+
         """
         if handler in self._event_handlers:
             self._event_handlers.remove(handler)
 
-    async def _handle_message(self, message: str):
+    async def _handle_message(self, message: str) -> None:
         """Handle incoming WebSocket message.
 
         Args:
             message: Raw message string
         """
         try:
+            event = None
             data = json.loads(message)
-
             # Check if it's a cache invalidation event
-            if data.get('type') == 'cache_invalidation':
-                event = InvalidationEvent.from_dict(data.get('payload', {}))
-                logger.debug(f"Received invalidation event: {event.event_type} for {event.project_name}")
+            # Topics for invalidation events
+            # TODO (antirotor): this needs to be more flexible/configurable
+            #   as invalidation topics are more than just these and the changed
+            #   topics are more specific - like entity.folder.attrib_changed.
+            #   Maybe adding a wildcard match? Or some Cache Strategy interface
+            #   so that would allow customization of cache invalidation logic.
 
-                # Notify all handlers
-                for handler in self._event_handlers:
-                    try:
-                        handler(event)
-                    except Exception as e:
-                        logger.error(f"Error in event handler: {e}")
+            invalidation_topics = {
+                "entity.project.deleted",
+                "entity.folder.deleted",
+                "entity.folder.attrib_changed",
+                "entity.folder.status_changed",
+                "entity.task.deleted",
+                "entity.task.attrib_changed",
+                "entity.task.status_changed",
+            }
+
+            if data.get("topic") in invalidation_topics:
+                event = InvalidationEvent.from_dict(data.get("payload", {}))
+                logger.debug(
+                    f"Received invalidation event: {event.event_type} "
+                    f"for {event.project_name}")
+
+            if event is None:
+                return
+
+            # Notify all handlers
+            for handler in self._event_handlers:
+                try:
+                    handler(event)
+                except Exception as e:
+                    logger.error(f"Error in event handler: {e}")
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse WebSocket message: {e}")
@@ -104,28 +175,37 @@ class WebSocketClient:
             True if connection successful
         """
         try:
-            headers = {
-                'Authorization': f'Bearer {self.api_key}'
-            }
-
             self._websocket = await websockets.connect(
                 self.ws_url,
-                additional_headers=headers,
                 ping_interval=30,
                 ping_timeout=10
             )
 
+            subscribe_data = json.dumps(
+                    {
+                        "topic": "auth",
+                        "token": self.api_key,
+                        "subscribe": [
+                            "entity.folder",
+                            "entity.project",
+                            "entity.task"],
+                     })
+            await self._websocket.send(
+                subscribe_data, text=True)  # Subscribe to all entity events
             logger.info(f"Connected to WebSocket at {self.ws_url}")
-            return True
 
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket: {e}")
             return False
+        return True
 
-    async def _listen(self):
+    async def _listen(self) -> None:
         """Listen for WebSocket messages."""
+        if not self._websocket:
+            return
         try:
             async for message in self._websocket:
+                logger.debug(f"WebSocket message received: {message}")
                 await self._handle_message(message)
 
         except ConnectionClosed:
@@ -135,7 +215,7 @@ class WebSocketClient:
         except Exception as e:
             logger.error(f"Unexpected error in WebSocket listener: {e}")
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the WebSocket client with auto-reconnect."""
         self._running = True
         reconnect_delay = self._reconnect_delay
@@ -143,23 +223,26 @@ class WebSocketClient:
         while self._running:
             try:
                 if await self._connect():
-                    reconnect_delay = self._reconnect_delay  # Reset delay on successful connection
+                    # Reset delay on successful connection
+                    reconnect_delay = self._reconnect_delay
                     await self._listen()
 
                 if not self._running:
                     break
 
-                logger.info(f"Reconnecting in {reconnect_delay} seconds...")
+                logger.info(f"Reconnecting in {reconnect_delay} seconds ...")
                 await asyncio.sleep(reconnect_delay)
 
                 # Exponential backoff with max limit
-                reconnect_delay = min(reconnect_delay * 2, self._max_reconnect_delay)
+                reconnect_delay = min(
+                    reconnect_delay * 2, self._max_reconnect_delay)
+                logger.debug(f"Next reconnect delay: {reconnect_delay} seconds")
 
             except Exception as e:
                 logger.error(f"WebSocket client error: {e}")
                 await asyncio.sleep(reconnect_delay)
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the WebSocket client."""
         self._running = False
 
@@ -169,10 +252,21 @@ class WebSocketClient:
 
         logger.info("WebSocket client stopped")
 
-    def is_connected(self) -> bool:
+    async def is_connected(self) -> bool:
         """Check if WebSocket is connected.
 
         Returns:
             True if connected
         """
-        return self._websocket is not None and not self._websocket.closed
+        if not self._websocket:
+            return False
+
+        try:
+            await self._websocket.recv()
+        except (ConnectionClosed, WebSocketException):
+            return False
+
+        return (
+            self._websocket is not None
+            and not self._websocket.recv()
+        )

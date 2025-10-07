@@ -1,9 +1,9 @@
+import glob
+import json
+import logging
 import os
 from pathlib import Path
 from shutil import rmtree
-import json
-import glob
-import logging
 
 TMP_FILE = "./missing_init_files.json"
 NFILES = []
@@ -19,7 +19,7 @@ class ColorFormatter(logging.Formatter):
     bold_red = "\x1b[31;1m"
     reset = "\x1b[0m"
     fmt = (
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s "  # noqa
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s "
         "(%(filename)s:%(lineno)d)"
     )
 
@@ -54,7 +54,7 @@ def create_init_file(dirpath, msg):
     ini_file = f"{dirpath}/__init__.py"
     Path(ini_file).touch()
     NFILES.append(ini_file)
-    logging.info(f"{msg}: created '{ini_file}'")
+    logging.info("%s: created '%s'", msg, ini_file)
 
 
 def create_parent_init_files(dirpath: str, rootpath: str, msg: str):
@@ -69,8 +69,7 @@ def create_parent_init_files(dirpath: str, rootpath: str, msg: str):
 
 
 def add_missing_init_files(*roots, msg=""):
-    """
-    This function takes in one or more root directories as arguments and scans
+    """This function takes in one or more root directories as arguments and scans
     them for Python files without an `__init__.py` file. It generates a JSON
     file named `missing_init_files.json` containing the paths of these files.
 
@@ -80,7 +79,6 @@ def add_missing_init_files(*roots, msg=""):
     Returns:
         None
     """
-
     for root in roots:
         if not os.path.exists(root):
             continue
@@ -103,8 +101,7 @@ def add_missing_init_files(*roots, msg=""):
 
 
 def remove_missing_init_files(msg=""):
-    """
-    This function removes temporary `__init__.py` files created in the
+    """This function removes temporary `__init__.py` files created in the
     `add_missing_init_files()` function. It reads the paths of these files from
     a JSON file named `missing_init_files.json`.
 
@@ -117,22 +114,21 @@ def remove_missing_init_files(msg=""):
     global NFILES
     nfiles = []
     if os.path.exists(TMP_FILE):
-        with open(TMP_FILE, "r") as f:
+        with open(TMP_FILE) as f:
             nfiles = json.load(f)
     else:
         nfiles = NFILES
 
     for file in nfiles:
         Path(file).unlink()
-        logging.info(f"{msg}: removed {file}")
+        logging.info("%s: removed %s", msg, file)
 
     os.remove(TMP_FILE)
     NFILES = []
 
 
 def remove_pychache_dirs(msg=""):
-    """
-    This function walks the current directory and removes all existing
+    """This function walks the current directory and removes all existing
     '__pycache__' directories.
 
     Args:
@@ -148,10 +144,10 @@ def remove_pychache_dirs(msg=""):
             pydir = Path(f"{dirpath}/__pycache__")
             rmtree(pydir)
             nremoved += 1
-            logging.info(f"{msg}: removed '{pydir}'")
+            logging.info("%s: removed '%s'", msg, pydir)
 
     if not nremoved:
-        logging.info(f"{msg}: no __pycache__ dirs found")
+        logging.info("%s: no __pycache__ dirs found", msg)
 
 
 # mkdocs hooks ----------------------------------------------------------------
@@ -162,8 +158,7 @@ def on_startup(command, dirty):
 
 
 def on_pre_build(config):
-    """
-    This function is called before the MkDocs build process begins. It adds
+    """This function is called before the MkDocs build process begins. It adds
     temporary `__init__.py` files to directories that do not contain one, to
     make sure mkdocs doesn't ignore them.
     """
@@ -175,7 +170,7 @@ def on_pre_build(config):
             msg="HOOK    -  on_pre_build",
         )
     except BaseException as e:
-        logging.error(e)
+        logging.exception(e)
         remove_missing_init_files(
             msg="HOOK    -  on_post_build: cleaning up on error !"
         )
@@ -183,8 +178,7 @@ def on_pre_build(config):
 
 
 def on_post_build(config):
-    """
-    This function is called after the MkDocs build process ends. It removes
+    """This function is called after the MkDocs build process ends. It removes
     temporary `__init__.py` files that were added in the `on_pre_build()`
     function.
     """

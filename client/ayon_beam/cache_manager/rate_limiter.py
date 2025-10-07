@@ -1,12 +1,11 @@
 """Rate limiter for controlling data fetching frequency."""
 
 import asyncio
-import time
 import logging
-from typing import Dict, Optional
-from dataclasses import dataclass, field
+import time
 from collections import defaultdict
-
+from dataclasses import dataclass
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +109,9 @@ class RateLimiter:
 
         # Statistics
         self.stats = {
-            'total_requests': 0,
-            'rejected_requests': 0,
-            'cooldown_activations': 0
+            "total_requests": 0,
+            "rejected_requests": 0,
+            "cooldown_activations": 0
         }
 
     def _get_project_bucket(self, project_name: str) -> TokenBucket:
@@ -142,38 +141,38 @@ class RateLimiter:
         Returns:
             True if permission granted, False if denied or timeout
         """
-        self.stats['total_requests'] += 1
+        self.stats["total_requests"] += 1
 
         # Check global cooldown
         now = time.time()
-        if now < self.cooldown_until['global']:
+        if now < self.cooldown_until["global"]:
             logger.debug("Request rejected: global cooldown active")
-            self.stats['rejected_requests'] += 1
+            self.stats["rejected_requests"] += 1
             return False
 
         # Check project cooldown
         if now < self.cooldown_until[project_name]:
-            logger.debug(f"Request rejected: project {project_name} cooldown active")
-            self.stats['rejected_requests'] += 1
+            logger.debug("Request rejected: project %s cooldown active", project_name)
+            self.stats["rejected_requests"] += 1
             return False
 
         # Try to acquire tokens from both global and project buckets
         global_acquired = await self.global_bucket.wait_for_tokens(1, timeout)
         if not global_acquired:
             logger.debug("Request rejected: global rate limit")
-            self.stats['rejected_requests'] += 1
-            self._activate_cooldown('global')
+            self.stats["rejected_requests"] += 1
+            self._activate_cooldown("global")
             return False
 
         project_bucket = self._get_project_bucket(project_name)
         project_acquired = await project_bucket.wait_for_tokens(1, timeout)
         if not project_acquired:
-            logger.debug(f"Request rejected: project {project_name} rate limit")
-            self.stats['rejected_requests'] += 1
+            logger.debug("Request rejected: project %s rate limit", project_name)
+            self.stats["rejected_requests"] += 1
             self._activate_cooldown(project_name)
             return False
 
-        logger.debug(f"Request approved for project {project_name}")
+        logger.debug("Request approved for project %s", project_name)
         return True
 
     def _activate_cooldown(self, key: str):
@@ -183,7 +182,7 @@ class RateLimiter:
             key: Cooldown key
         """
         self.cooldown_until[key] = time.time() + self.config.cooldown_period
-        self.stats['cooldown_activations'] += 1
+        self.stats["cooldown_activations"] += 1
         logger.info(f"Cooldown activated for {key} for {self.config.cooldown_period} seconds")
 
     async def can_make_request(self, project_name: str) -> bool:
@@ -198,7 +197,7 @@ class RateLimiter:
         now = time.time()
 
         # Check cooldowns
-        if now < self.cooldown_until['global'] or now < self.cooldown_until[project_name]:
+        if now < self.cooldown_until["global"] or now < self.cooldown_until[project_name]:
             return False
 
         # Check if tokens are available (without consuming them)
@@ -223,9 +222,9 @@ class RateLimiter:
 
         return {
             **self.stats,
-            'active_cooldowns': active_cooldowns,
-            'global_tokens': self.global_bucket.tokens,
-            'project_buckets': {
+            "active_cooldowns": active_cooldowns,
+            "global_tokens": self.global_bucket.tokens,
+            "project_buckets": {
                 name: bucket.tokens
                 for name, bucket in self.project_buckets.items()
             }

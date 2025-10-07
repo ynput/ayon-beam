@@ -1,2 +1,2 @@
-from .version import __version__
-from .addon import BeamAddon
+from .addon import BeamAddon as BeamAddon
+from .version import __version__ as __version__
