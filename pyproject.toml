@@ -12,6 +12,7 @@ license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.9.6"
 dependencies = [
+    "ayon-python-api >= 1.0.0",
     "pre-commit",
     "ruff ~= 0.13",
     "mypy",
@@ -35,4 +36,22 @@ dependencies = [
 dev = [
     "pytest",
     "codespell",
+    "pytest-ayon",
+]
+
+[tool.uv.sources]
+pytest-ayon = { git = "https://github.com/ynput/pytest-ayon.git", branch = "develop" }
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+addopts = "-ra -q"
+
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "api: API tests",
+    "cli: CLI tests",
+    "slow: Slow tests",
+    "server: Tests that require a running AYON server",
 ]

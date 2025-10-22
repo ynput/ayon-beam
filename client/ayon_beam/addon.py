@@ -2,126 +2,149 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from typing import Any, Optional
 
 from ayon_core.addon import AYONAddon, IPluginPaths, ITrayService
+from loguru import logger
 
 from .cache_manager import CacheService, CacheServiceConfig, RateLimitConfig
-
-logger = logging.getLogger(__name__)
+from .version import __version__
 
 
 class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
     """Beam addon for AYON - Smart caching and entity-centric API."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    version = __version__
+
+    def __init__(self):
+        """Initialize the Beam addon."""
+        super().__init__()
         self._cache_service: Optional[CacheService] = None
         self._cache_task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stop_event: Optional[asyncio.Event] = None
+        self.log = logger
 
     @property
-    def name(self):
+    def name(self) -> str:
+        """Get the addon name.
+
+        Returns:
+            str: The addon name.
+        """
         return "ayon-beam"
 
     @property
     def label(self) -> str:
+        """Get the addon label.
+
+        Returns:
+            str: The addon label.
+
+        """
         return "AYON Beam Caching Server"
 
-    def initialize(self, settings: dict[str, Any]):
+    def initialize(self, settings: dict[str, Any]) -> None:
         """Initialize the addon with settings."""
         # This could be called during addon initialization
 
     def tray_init(self) -> None:
         """Initialize the tray service."""
-        logger.info("Initializing Beam addon tray service")
+        self.log.info("Initializing AYON Beam addon tray service")
 
-        try:
-            # Create event loop for async operations
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
+        # Create event loop for async operations
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        # Create an asyncio.Event to signal the cache task to stop
+        self._stop_event = asyncio.Event()
 
-            # Get configuration from environment or settings
-            config = self._get_cache_config()
+        # Get configuration from environment or settings
+        config = self._get_cache_config()
+        config = self._get_cache_config()
 
-            if config:
-                # Initialize cache service
-                self._cache_service = CacheService(config)
-                logger.info("Cache service initialized")
-            else:
-                logger.warning("Cache service not configured - missing required settings")
-
-        except Exception as e:
-            logger.error("Failed to initialize Beam addon: %s", e)
+        if config:
+            # Initialize cache service
+            self._cache_service = CacheService(config)
+            logger.info("Cache service initialized")
+        else:
+            logger.warning(
+                "Cache service not configured - missing required settings")
 
     def tray_start(self) -> None:
         """Start the tray service."""
-        logger.info("Starting Beam addon tray service")
+        self.log.info("Starting AYON Beam addon tray service")
 
         if not self._cache_service or not self._loop:
-            logger.error("Cache service not initialized")
+            self.log.error("Cache service not initialized")
             return
 
         try:
             # Start cache service in background task
-            self._cache_task = self._loop.create_task(self._run_cache_service())
+            self._cache_task = self._loop.create_task(
+                self._run_cache_service())
 
             # Run the event loop in a separate thread to avoid blocking
             import threading
 
-            def run_loop():
+            def run_loop() -> None:
+                """Run the asyncio event loop."""
+                if not self._loop:
+                    return
                 self._loop.run_forever()
 
             self._loop_thread = threading.Thread(target=run_loop, daemon=True)
             self._loop_thread.start()
 
-            logger.info("AYON Beam addon started successfully")
+            self.log.info("AYON Beam addon started successfully")
 
-        except Exception as e:
-            logger.error("Failed to start Beam addon: %s", e)
+        except Exception:
+            self.log.exception("Failed to start AYON Beam addon")
 
     def tray_exit(self) -> None:
         """Stop the tray service."""
-        logger.info("Stopping AYON Beam addon tray service")
+        if (self._cache_service and
+                self._loop and not self._loop.is_closed()):
+            # Schedule the stop coroutine
+            future = asyncio.run_coroutine_threadsafe(
+                self._cache_service.stop(),
+                self._loop
+            )
+            future.result(timeout=10)  # Wait up to 10 seconds
 
-        try:
-            if self._cache_service:
-                # Schedule the stop coroutine
-                if self._loop and not self._loop.is_closed():
-                    future = asyncio.run_coroutine_threadsafe(
-                        self._cache_service.stop(),
-                        self._loop
-                    )
-                    future.result(timeout=10)  # Wait up to 10 seconds
+        # Signal the cache task to exit and stop the event loop
+        if self._loop and not self._loop.is_closed():
+            if self._stop_event is not None:
+                # Set the event in the event loop thread to wake the cache task
+                self._loop.call_soon_threadsafe(self._stop_event.set)
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        # Stop the event loop
+        if self._loop and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._loop.stop)
 
-            # Stop the event loop
-            if self._loop and not self._loop.is_closed():
-                self._loop.call_soon_threadsafe(self._loop.stop)
-
-            logger.info("Beam addon stopped")
-
-        except Exception as e:
-            logger.error("Error stopping Beam addon: %s", e)
-
-    async def _run_cache_service(self):
+    async def _run_cache_service(self) -> None:
         """Run the cache service."""
+        if not self._cache_service:
+            self.log.error("Cache service not initialized")
+            return
         try:
             await self._cache_service.start()
-            # Keep running until stopped
-            while True:
-                await asyncio.sleep(1)
+            # Wait until stop event is set instead of busy sleeping
+            if self._stop_event is None:
+                self._stop_event = asyncio.Event()
+            await self._stop_event.wait()
         except asyncio.CancelledError:
-            logger.info("Cache service task cancelled")
-        except Exception as e:
-            logger.error("Cache service error: %s", e)
+            self.log.exception("Cache service task cancelled")
+        except Exception:
+            self.log.exception("Cache service error")
 
-    def _get_cache_config(self) -> Optional[CacheServiceConfig]:
+    @staticmethod
+    def _get_cache_config() -> Optional[CacheServiceConfig]:
         """Get cache service configuration from environment and settings.
 
         Returns:
-            Cache configuration or None if not properly configured
+            Cache configuration or None if not properly configured.
+
         """
         try:
             # Get server connection info from environment
@@ -129,7 +152,8 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
             api_key = os.getenv("AYON_API_KEY")
 
             if not server_url or not api_key:
-                logger.error("Missing AYON_SERVER_URL or AYON_API_KEY environment variables")
+                logger.error("Missing AYON_SERVER_URL or "
+                             "AYON_API_KEY environment variables")
                 return None
 
             # Get memcached settings from environment
@@ -138,10 +162,14 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
 
             # Get rate limiting settings
             rate_limit_config = RateLimitConfig(
-                requests_per_second=float(os.getenv("BEAM_RATE_LIMIT_RPS", "5.0")),
-                burst_limit=int(os.getenv("BEAM_BURST_LIMIT", "10")),
-                cooldown_period=float(os.getenv("BEAM_COOLDOWN_PERIOD", "60.0")),
-                per_project_limit=float(os.getenv("BEAM_PROJECT_RATE_LIMIT", "2.0"))
+                requests_per_second=float(
+                    os.getenv("BEAM_RATE_LIMIT_RPS", "5.0")),
+                burst_limit=int(
+                    os.getenv("BEAM_BURST_LIMIT", "10")),
+                cooldown_period=float(
+                    os.getenv("BEAM_COOLDOWN_PERIOD", "60.0")),
+                per_project_limit=float(
+                    os.getenv("BEAM_PROJECT_RATE_LIMIT", "2.0"))
             )
 
             # Get caching settings
@@ -156,13 +184,21 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
             # Example: BEAM_PROJECTS="TestProject,AnotherProject"
             projects_env = os.getenv("BEAM_PROJECTS", "")
             if projects_env:
-                projects_to_cache = [p.strip() for p in projects_env.split(",") if p.strip()]
+                projects_to_cache = [
+                    p.strip()
+                    for p in projects_env.split(",")
+                    if p.strip()
+                ]
 
             # Example: BEAM_FOLDERS_TestProject="folder1,folder2"
             for project in projects_to_cache:
                 folders_env = os.getenv(f"BEAM_FOLDERS_{project}", "")
                 if folders_env:
-                    folders_to_cache[project] = [f.strip() for f in folders_env.split(",") if f.strip()]
+                    folders_to_cache[project] = [
+                        f.strip()
+                        for f in folders_env.split(",")
+                        if f.strip()
+                    ]
 
             config = CacheServiceConfig(
                 server_url=server_url,
@@ -177,12 +213,14 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
                 folders_to_cache=folders_to_cache
             )
 
-            logger.info(f"Cache config created for {len(projects_to_cache)} projects")
-            return config
+            logger.info(
+                f"Cache config created for {len(projects_to_cache)} projects")
 
-        except Exception as e:
-            logger.error("Failed to create cache configuration: %s", e)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to create cache configuration")
             return None
+        else:
+            return config
 
     def get_cache_service(self) -> Optional[CacheService]:
         """Get the cache service instance.
@@ -194,101 +232,114 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
 
     async def get_folder_data(
             self, project_name: str,
-            folder_id: str,
-            force_refresh: bool = False) -> Optional[dict[str, Any]]:
+            folder_id: str) -> Optional[dict[str, Any]]:
         """Get folder data through the cache service.
 
         Args:
             project_name: Name of the project
             folder_id: ID of the folder
-            force_refresh: If True, bypass cache and fetch fresh data
 
         Returns:
             Folder data with products and tasks
         """
         if not self._cache_service:
-            logger.error("Cache service not available")
+            self.log.error("Cache service not available")
             return None
 
         return await self._cache_service.get_folder_data(
-            project_name, folder_id, force_refresh)
+            project_name, folder_id)
 
     def get_service_stats(self) -> dict[str, Any]:
         """Get comprehensive service statistics.
 
         Returns:
-            Dictionary with service statistics
+            Dictionary with service statistics.
+
         """
         if not self._cache_service:
             return {"error": "Cache service not available"}
 
         return self._cache_service.get_service_stats()
 
-    def add_project_to_cache(self, project_name: str, folder_ids: list):
+    def add_project_to_cache(
+            self, project_name: str, folder_ids: list) -> None:
         """Add a project and its folders to the caching list.
 
         Args:
             project_name: Name of the project
-            folder_ids: List of folder IDs to cache
+            folder_ids: List of folder IDs to cache.
+
         """
         if self._cache_service:
             self._cache_service.add_project_to_cache(project_name, folder_ids)
         else:
-            logger.error("Cache service not available")
+            self.log.error("Cache service not available")
 
-    def remove_project_from_cache(self, project_name: str):
+    def remove_project_from_cache(self, project_name: str) -> None:
         """Remove a project from the caching list.
 
         Args:
-            project_name: Name of the project to remove
+            project_name: Name of the project to remove.
+
         """
         if self._cache_service:
             self._cache_service.remove_project_from_cache(project_name)
         else:
-            logger.error("Cache service not available")
+            self.log.error("Cache service not available")
 
     def update_cache_configuration(
-            self, projects_config: dict[str, list[str]]):
+            self, projects_config: dict[str, list[str]]) -> None:
         """Dynamically update the projects and folders to cache.
 
         Args:
-            projects_config: Dictionary mapping project names to lists of folder IDs
+            projects_config: Dictionary mapping project
+            names to lists of folder IDs.
+
         """
         if self._cache_service:
             self._cache_service.update_cache_configuration(projects_config)
         else:
-            logger.error("Cache service not available")
+            self.log.error("Cache service not available")
 
     def get_cache_configuration(self) -> dict[str, list[str]]:
         """Get current cache configuration.
 
         Returns:
-            Dictionary mapping project names to folder IDs
+            Dictionary mapping project names to folder IDs.
+
         """
         if self._cache_service:
             return self._cache_service.get_cache_configuration()
-        logger.error("Cache service not available")
+        self.log.error("Cache service not available")
         return {}
 
-    def add_folders_to_project(self, project_name: str, folder_ids: list[str], replace: bool = False):
+    def add_folders_to_project(
+            self, project_name: str,
+            folder_ids: list[str]) -> None:
         """Add or update folders for a specific project.
 
         Args:
             project_name: Name of the project
             folder_ids: List of folder IDs to add/set
-            replace: If True, replace existing folders; if False, merge with existing
+
         """
         if self._cache_service:
-            self._cache_service.add_folders_to_project(project_name, folder_ids, replace)
+            self._cache_service.add_folders_to_project(
+                project_name, folder_ids)
         else:
-            logger.error("Cache service not available")
+            self.log.error("Cache service not available")
 
-    def remove_folders_from_project(self, project_name: str, folder_ids: list[str] = None):
+    def remove_folders_from_project(
+            self,
+            project_name: str,
+            folder_ids: Optional[list[str]]) -> None:
         """Remove specific folders or entire project from caching.
 
         Args:
             project_name: Name of the project
-            folder_ids: Specific folder IDs to remove. If None, removes entire project.
+            folder_ids: Specific folder IDs to remove.
+                If None, removes entire project.
+
         """
         if self._cache_service:
             self._cache_service.remove_folders_from_project(
@@ -297,8 +348,8 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
             logger.error("Cache service not available")
 
     async def trigger_immediate_prefetch(
-            self, project_name: Optional[str] = None,
-            folder_ids: Optional[list[str]] = None):
+            self, project_name: Optional[str],
+            folder_ids: Optional[list[str]]) -> None:
         """Trigger immediate prefetch for specific projects/folders.
 
         Args:
@@ -316,21 +367,7 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
                 )
                 try:
                     future.result(timeout=30)
-                except Exception as e:
-                    logger.error("Failed to trigger prefetch: %s", e)
+                except Exception:
+                    self.log.exception("Failed to trigger prefetch")
         else:
-            logger.error("Cache service not available")
-
-    def get_project_folders(self, project_name: str) -> list[str]:
-        """Get configured folder IDs for a specific project.
-
-        Args:
-            project_name: Name of the project
-
-        Returns:
-            List of folder IDs configured for the project
-        """
-        if self._cache_service:
-            return self._cache_service.get_project_folders(project_name)
-        logger.error("Cache service not available")
-        return []
+            self.log.error("Cache service not available")

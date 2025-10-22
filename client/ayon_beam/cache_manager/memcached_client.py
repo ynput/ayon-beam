@@ -1,15 +1,17 @@
 """Memcached client for caching AYON hierarchy data."""
+from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from loguru import logger
-from pymemcache import serde
 from pymemcache.client.base import Client
 
+from .cache_client import CacheClient
 
-class MemcachedClient:
+
+class MemcachedClient(CacheClient):
     """Wrapper for pymemcache with AYON-specific caching logic."""
 
     def __init__(self, host: str = "localhost", port: int = 11211):
@@ -21,7 +23,7 @@ class MemcachedClient:
         """
         self.host = host
         self.port = port
-        self._client = None
+        self._client: Optional[Client] = None
         self._key_tracker: set[str] = set()  # Track keys for invalidation
 
     def connect(self) -> None:
@@ -29,7 +31,7 @@ class MemcachedClient:
         try:
             self._client = Client(
                 (self.host, self.port),
-                serde=serde.CompressedSerde,
+                # serde=serde.CompressedSerde,
                 connect_timeout=5.0,
                 timeout=10.0
             )
@@ -37,7 +39,7 @@ class MemcachedClient:
             self._client.version()
             logger.info(f"Connected to memcached at {self.host}:{self.port}")
         except Exception as e:
-            logger.error("Failed to connect to memcached: %s", e)
+            logger.error(f"Failed to connect to memcached: {e}")
             raise
 
     def disconnect(self) -> None:
@@ -47,8 +49,8 @@ class MemcachedClient:
             self._client = None
             logger.info("Disconnected from memcached")
 
+    @staticmethod
     def _generate_key(
-            self,
             project_name: str,
             folder_id: str,
             data_type: str = "folder") -> str:
@@ -64,10 +66,11 @@ class MemcachedClient:
         """
         key_base = f"ayon:{project_name}:{folder_id}:{data_type}"
         # Use hash for consistent key length
-        key_hash = hashlib.md5(key_base.encode()).hexdigest()
+        key_hash = hashlib.md5(key_base.encode()).hexdigest()  # noqa: S324
         return f"ayon_{key_hash}"
 
-    def _generate_metadata_key(self, cache_key: str) -> str:
+    @staticmethod
+    def _generate_metadata_key(cache_key: str) -> str:
         """Generate metadata key for cache entry.
 
         Args:
@@ -79,10 +82,42 @@ class MemcachedClient:
         """
         return f"{cache_key}_meta"
 
-    def store_folder_data(
+    def set_data(
+            self,
+            key: str,
+            value: Any,  # noqa: ANN401
+            ttl: int = 3600) -> bool:
+        """Set a value in cache.
+
+        Args:
+            key: The key under which to store the value
+            value: The value to store in the cache
+            ttl: Expiration time in seconds (default is 3600 seconds)
+
+        Returns:
+            True if the value was stored successfully, False otherwise
+
+        """
+        if not self._client:
+            logger.error("Not connected to memcached")
+            return False
+
+        success = False
+
+        try:
+            success = self._client.set(key=key, value=value, expire=ttl)
+            logger.debug(f"Set data for key: {key}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to set data for key {key}: {e}")
+
+        return bool(success)
+
+    def set_folder_data(
             self,
             project_name: str,
-            folder_id: str, data: dict[str, Any], ttl: int = 3600) -> bool:
+            folder_id: str,
+            data: dict[str, Any],
+            ttl: int = 3600) -> bool:
         """Store folder data in cache.
 
         Args:
@@ -103,29 +138,59 @@ class MemcachedClient:
             metadata_key = self._generate_metadata_key(cache_key)
 
             # Store main data
-            success = self._client.set(cache_key, data, expire=ttl)
+            success = self.set_data(cache_key, data, ttl)
+            # success = self._client.set(cache_key, data, expire=ttl)
 
             if success:
                 # Store metadata for tracking
                 metadata = {
                     "project_name": project_name,
                     "folder_id": folder_id,
-                    "cached_at": datetime.utcnow().isoformat(),
+                    "cached_at": datetime.now(tz=timezone.utc).isoformat(),
                     "ttl": ttl,
                     "data_type": "folder"
                 }
-                self._client.set(metadata_key, metadata, expire=ttl + 300)  # Keep metadata a bit longer
+                # Keep metadata a bit longer
+                self.set_data(metadata_key, metadata, ttl + 300)
 
                 # Track key for invalidation
                 self._key_tracker.add(cache_key)
 
-                logger.debug("Stored folder data for %s:%s", project_name, folder_id)
+                logger.debug(
+                    f"Stored folder data for {project_name}:{folder_id}")
                 return True
 
-        except Exception as e:
-            logger.error("Failed to store folder data: %s", e)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to store folder data: {e}")
 
         return False
+
+    def get_data(self, key: str) -> Any:  # noqa: ANN401
+        """Retrieve a value from the cache by key.
+
+        Args:
+            key: The key to look up in the cache.
+
+        Returns:
+            The cached value, or None if not found.
+
+        """
+        if not self._client:
+            logger.error("Not connected to memcached")
+            return None
+
+        try:
+            data = self._client.get(key)
+
+            if not data:
+                logger.debug(f"No cached data found for key {key}")
+
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to retrieve data for key {key}: {e}")
+        else:
+            return data
+
+        return None
 
     def get_folder_data(
             self,
@@ -139,23 +204,8 @@ class MemcachedClient:
         Returns:
             Cached folder data or None if not found
         """
-        if not self._client:
-            logger.error("Not connected to memcached")
-            return None
-
-        try:
-            cache_key = self._generate_key(project_name, folder_id, "folder")
-            data = self._client.get(cache_key)
-
-            if data:
-                logger.debug("Retrieved folder data for %s:%s", project_name, folder_id)
-                return data
-            logger.debug("No cached data found for %s:%s", project_name, folder_id)
-
-        except Exception as e:
-            logger.error("Failed to retrieve folder data: %s", e)
-
-        return None
+        cache_key = self._generate_key(project_name, folder_id, "folder")
+        return self.get_data(cache_key)
 
     def invalidate_folder(self, project_name: str, folder_id: str) -> bool:
         """Invalidate cached data for a specific folder.
@@ -182,12 +232,13 @@ class MemcachedClient:
             # Remove from tracker
             self._key_tracker.discard(cache_key)
 
-            logger.info("Invalidated cache for %s:%s", project_name, folder_id)
-            return True
+            logger.info(f"Invalidated cache for {project_name}:{folder_id}")
 
-        except Exception as e:
-            logger.error("Failed to invalidate folder cache: %s", e)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to invalidate folder cache: {e}")
             return False
+        else:
+            return True
 
     def invalidate_project(self, project_name: str) -> int:
         """Invalidate all cached data for a project.
@@ -229,8 +280,8 @@ class MemcachedClient:
                 f"Invalidated {invalidated_count} cache "
                 f"entries for project {project_name}")
 
-        except Exception as e:
-            logger.error("Failed to invalidate project cache: %s", e)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to invalidate project cache: {e}")
 
         return invalidated_count
 
@@ -250,7 +301,7 @@ class MemcachedClient:
                 "tracked_keys": len(self._key_tracker),
                 "connected": True
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             return {"error": str(e), "connected": False}
 
     def flush_all(self) -> bool:
@@ -268,6 +319,32 @@ class MemcachedClient:
             self._key_tracker.clear()
             logger.info("Flushed all cache data")
             return True
-        except Exception as e:
-            logger.error("Failed to flush cache: %s", e)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to flush cache: {e}")
             return False
+        else:
+            return True
+
+    def delete_data(self, key: str) -> None:
+        """Delete a value from the cache by key.
+
+        Args:
+            key: The key to delete from the cache.
+
+        """
+        if not self._client:
+            logger.error("Not connected to memcached")
+            return
+
+        self._client.delete(key)
+        self._key_tracker.discard(key)
+        logger.debug(f"Deleted data for key: {key}")
+
+    def invalidate_project_cache(self, project_name: str) -> None:
+        """Invalidate all cache entries related to a specific project.
+
+        Args:
+            project_name: Name of the project
+                whose cache entries should be invalidated.
+        """
+        self.invalidate_project(project_name)

@@ -8,10 +8,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import ayon_api
 from loguru import logger
 
 from .graphql_client import GraphQLClient
 from .memcached_client import MemcachedClient
+from .prefetcher import Prefetcher
 from .rate_limiter import RateLimitConfig, RateLimiter
 from .websocket_client import InvalidationEvent, WebSocketClient
 
@@ -49,6 +51,10 @@ class CacheService:
 
         Args:
             config: Service configuration
+
+        Raises:
+            RuntimeError: If current user cannot be determined
+
         """
         self.config = config
 
@@ -59,6 +65,11 @@ class CacheService:
         self.websocket_client = (WebSocketClient
                                  (config.server_url, config.api_key))
         self.rate_limiter = RateLimiter(config.rate_limit_config)
+        current_user = ayon_api.get_user()
+        if not current_user:
+            msg = "Failed to get current user from AYON API"
+            raise RuntimeError(msg)
+        self.prefetcher = Prefetcher(current_user["name"])
 
         # Service state
         self._running = False
@@ -102,6 +113,8 @@ class CacheService:
 
             self._running = True
             logger.info("Cache service started successfully")
+
+            await self.seed_cache()
 
         except Exception as e:
             logger.error(f"Failed to start cache service: {e}")
@@ -179,7 +192,7 @@ class CacheService:
                 project_name, folder_id)
             if data:
                 # Store in cache
-                self.memcache_client.store_folder_data(
+                self.memcache_client.set_folder_data(
                     project_name,
                     folder_id,
                     data,
@@ -194,7 +207,7 @@ class CacheService:
             logger.warning(
                 f"Failed to fetch data for {project_name}:{folder_id}")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.stats["fetch_failures"] += 1
             logger.error(
                 f"Error fetching data for {project_name}:{folder_id}: {e}")
@@ -232,6 +245,21 @@ class CacheService:
         result = await self.get_folder_data(project_name, folder_id)
         return result is not None
 
+    async def seed_cache(self) -> None:
+        """Seed the cache with initial data for configured projects/folders."""
+        logger.info("Seeding cache with initial data")
+
+        ids_to_fetch = self.prefetcher.prefetch()
+        seed = {}
+        for project_name, folder_id in ids_to_fetch:
+            if project_name not in seed:
+                seed[project_name] = set()
+            seed[project_name].add(folder_id)
+
+        for project_name, folder_ids in seed.items():
+            self.add_project_to_cache(project_name, list(folder_ids))
+        logger.info("Cache seeding completed")
+
     async def _prefetch_loop(self) -> None:
         """Background task for pre-fetching configured folders."""
         logger.info("Starting pre-fetch loop")
@@ -244,9 +272,9 @@ class CacheService:
                 # Wait for next cycle
                 await asyncio.sleep(self.config.prefetch_interval)
 
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: PERF203
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f"Error in prefetch loop: {e}")
                 await asyncio.sleep(60)  # Wait before retrying
 
@@ -297,26 +325,25 @@ class CacheService:
             event: Invalidation event
         """
         logger.debug("Handling invalidation event: "
-                     f"{event.event_type} for {event.project_name}")
+                     f"{event.event_type} for "
+                     f"{event.project_name} - {event.entity_id}")
 
         try:
-            if event.event_type == "folder_updated" and event.folder_id:
+            if event.event_type.startswith(
+                    "entity.folder") and event.entity_id:
                 # Invalidate specific folder
-                self.memcache_client.invalidate_folder(event.project_name, event.folder_id)
+                self.memcache_client.invalidate_folder(
+                    event.project_name, event.entity_id)
                 self.stats["invalidations"] += 1
 
-            elif event.event_type == "project_updated":
+            elif event.event_type.startswith("entity.project"):
                 # Invalidate entire project
-                count = self.memcache_client.invalidate_project(event.project_name)
+                count = self.memcache_client.invalidate_project(
+                    event.project_name)
                 self.stats["invalidations"] += count
 
-            elif event.event_type == "entity_deleted" and event.folder_id:
-                # Handle entity deletion - might need to refresh parent folder
-                self.memcache_client.invalidate_folder(event.project_name, event.folder_id)
-                self.stats["invalidations"] += 1
-
-        except Exception as e:
-            logger.error(f"Error handling invalidation event: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Error handling invalidation event: {e}")
 
     def add_project_to_cache(
             self, project_name: str, folder_ids: list[str]) -> None:
@@ -541,16 +568,5 @@ class CacheService:
                 logger.info(
                     "Immediate prefetch completed: "
                     f"{success_count}/{len(results)} successful")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f"Error in immediate prefetch: {e}")
-
-    def get_project_folders(self, project_name: str) -> list[str]:
-        """Get configured folder IDs for a specific project.
-
-        Args:
-            project_name: Name of the project
-
-        Returns:
-            List of folder IDs configured for the project
-        """
-        return self.config.folders_to_cache.get(project_name, []).copy()

@@ -1,13 +1,19 @@
-"""Rate limiter for controlling data fetching frequency."""
+"""Rate limiter for controlling data fetching frequency.
+
+TODO (antirotor): This needs to be more clever, getting
+    tokens from the server - permission to fetch based on
+    server load.
+
+"""
+from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 @dataclass
@@ -15,7 +21,7 @@ class RateLimitConfig:
     """Rate limiting configuration."""
     requests_per_second: float = 5.0  # Max requests per second
     burst_limit: int = 10  # Max burst requests
-    cooldown_period: float = 60.0  # Cooldown after hitting limits (seconds)
+    cooldown_period: float = 60.0  # Cool-down after hitting limits (seconds)
     per_project_limit: float = 2.0  # Max requests per second per project
 
 
@@ -61,7 +67,10 @@ class TokenBucket:
 
             return False
 
-    async def wait_for_tokens(self, tokens: int = 1, timeout: Optional[float] = None) -> bool:
+    async def wait_for_tokens(
+            self,
+            tokens: int = 1,
+            timeout: Optional[float] = None) -> bool:
         """Wait until enough tokens are available.
 
         Args:
@@ -87,7 +96,7 @@ class TokenBucket:
 class RateLimiter:
     """Advanced rate limiter for GraphQL requests."""
 
-    def __init__(self, config: RateLimitConfig = None):
+    def __init__(self, config: Optional[RateLimitConfig] = None):
         """Initialize rate limiter.
 
         Args:
@@ -104,7 +113,7 @@ class RateLimiter:
         # Per-project rate limiters
         self.project_buckets: Dict[str, TokenBucket] = {}
 
-        # Cooldown tracking
+        # Cool-down tracking
         self.cooldown_until: Dict[str, float] = defaultdict(float)
 
         # Statistics
@@ -125,13 +134,15 @@ class RateLimiter:
         """
         if project_name not in self.project_buckets:
             self.project_buckets[project_name] = TokenBucket(
-                capacity=int(self.config.per_project_limit * 2),  # Allow some burst
+                capacity=int(
+                    self.config.per_project_limit * 2),  # Allow some burst
                 refill_rate=self.config.per_project_limit
             )
 
         return self.project_buckets[project_name]
 
-    async def acquire(self, project_name: str, timeout: Optional[float] = 30.0) -> bool:
+    async def acquire(
+            self, project_name: str, timeout: Optional[float] = 30.0) -> bool:
         """Acquire permission to make a request.
 
         Args:
@@ -143,16 +154,17 @@ class RateLimiter:
         """
         self.stats["total_requests"] += 1
 
-        # Check global cooldown
+        # Check global cool-down
         now = time.time()
         if now < self.cooldown_until["global"]:
-            logger.debug("Request rejected: global cooldown active")
+            logger.debug("Request rejected: global cool-own active")
             self.stats["rejected_requests"] += 1
             return False
 
-        # Check project cooldown
+        # Check project cool-down
         if now < self.cooldown_until[project_name]:
-            logger.debug("Request rejected: project %s cooldown active", project_name)
+            logger.debug(
+                "Request rejected: project %s cool-down active", project_name)
             self.stats["rejected_requests"] += 1
             return False
 
@@ -167,7 +179,8 @@ class RateLimiter:
         project_bucket = self._get_project_bucket(project_name)
         project_acquired = await project_bucket.wait_for_tokens(1, timeout)
         if not project_acquired:
-            logger.debug("Request rejected: project %s rate limit", project_name)
+            logger.debug(
+                "Request rejected: project %s rate limit", project_name)
             self.stats["rejected_requests"] += 1
             self._activate_cooldown(project_name)
             return False
@@ -175,15 +188,18 @@ class RateLimiter:
         logger.debug("Request approved for project %s", project_name)
         return True
 
-    def _activate_cooldown(self, key: str):
+    def _activate_cooldown(self, key: str) -> None:
         """Activate cooldown for a key (global or project name).
 
         Args:
             key: Cooldown key
+
         """
         self.cooldown_until[key] = time.time() + self.config.cooldown_period
         self.stats["cooldown_activations"] += 1
-        logger.info(f"Cooldown activated for {key} for {self.config.cooldown_period} seconds")
+        logger.info(
+            f"Cooldown activated for {key} "
+            f"for {self.config.cooldown_period} seconds")
 
     async def can_make_request(self, project_name: str) -> bool:
         """Check if a request can be made without acquiring tokens.
@@ -197,7 +213,7 @@ class RateLimiter:
         now = time.time()
 
         # Check cooldowns
-        if now < self.cooldown_until["global"] or now < self.cooldown_until[project_name]:
+        if now < self.cooldown_until["global"] or now < self.cooldown_until[project_name]:  # noqa: E501
             return False
 
         # Check if tokens are available (without consuming them)
@@ -207,7 +223,7 @@ class RateLimiter:
 
         return global_available and project_available
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get rate limiter statistics.
 
         Returns:
@@ -230,12 +246,12 @@ class RateLimiter:
             }
         }
 
-    def reset_cooldowns(self):
-        """Reset all active cooldowns."""
+    def reset_cooldowns(self) -> None:
+        """Reset all active cool-downs."""
         self.cooldown_until.clear()
-        logger.info("All cooldowns reset")
+        logger.info("All cool-downs reset")
 
-    def update_config(self, config: RateLimitConfig):
+    def update_config(self, config: RateLimitConfig) -> None:
         """Update rate limiting configuration.
 
         Args:

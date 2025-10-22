@@ -10,10 +10,15 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import aiofiles
 import aiofiles.os
+import ayon_api
 from loguru import logger
+
+from .prefetcher import Prefetcher
 
 if TYPE_CHECKING:
     from .cache_service import CacheService
+
+WatcherCallback = Callable[[dict[str, list[str]]], None]
 
 
 class CacheConfigManager:
@@ -25,18 +30,19 @@ class CacheConfigManager:
 
         Args:
             cache_service: Reference to the CacheService instance
-            config_file_path: Optional path to configuration file for persistence
+            config_file_path: Optional path to configuration
+                file for persistence
         """
         self.cache_service = cache_service
         self.config_file_path = (
             config_file_path or "ayon_beam_cache_config.json"
         )
-        self._config_watchers: list[Callable[[dict[str, list[str]]], None]] = []
+        self._config_watchers: list[WatcherCallback] = []
         self._file_watcher_task: Optional[asyncio.Task] = None
         self._last_file_mtime = 0
 
     def add_config_watcher(
-            self, callback: Callable[[dict[str, list[str]]], None]) -> None:
+            self, callback: WatcherCallback) -> None:
         """Add a callback that will be called when configuration changes.
 
         Args:
@@ -66,7 +72,7 @@ class CacheConfigManager:
         for callback in self._config_watchers:
             try:
                 callback(config)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001, PERF203
                 logger.error(f"Error in config watcher: {e}")
 
     async def load_config_from_file(
@@ -304,19 +310,29 @@ class CacheConfigManager:
 
         Returns:
             List of available folder IDs
+
         """
-        # This is a placeholder - you would implement actual GraphQL query
-        # to fetch available folders for the project
+        current_user = ayon_api.get_user()
+        if not current_user:
+            logger.error(
+                "No authenticated user for fetching folder suggestions")
+            return []
+
         try:
             # Example query to get all folders in a project
             # You would need to implement this in the GraphQLClient
             logger.info(f"Fetching folder suggestions for {project_name}")
-            # folders = await self.cache_service.graphql_client.get_project_folders(project_name)
-            # return [folder['id'] for folder in folders]
-            return []
-        except Exception as e:
+            prefetch_ids = Prefetcher(user=current_user["name"]).prefetch()
+            return_ids = [
+                prefetch_data.folder_id
+                for prefetch_data in prefetch_ids
+                if prefetch_data.project_name == project_name
+            ]
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to get folder suggestions: {e}")
             return []
+        else:
+            return return_ids
 
 
 # Convenience functions for easy configuration management
@@ -335,10 +351,11 @@ async def load_cache_config_from_file(
     manager = CacheConfigManager(cache_service)
     try:
         await manager.apply_config_from_file(file_path)
-        return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to load config: {e}")
         return False
+    else:
+        return True
 
 
 def update_cache_config_from_env(

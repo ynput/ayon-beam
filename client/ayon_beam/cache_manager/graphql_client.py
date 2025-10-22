@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import aiohttp
 from loguru import logger
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 
 @dataclass
@@ -14,7 +17,9 @@ class GraphQLQuery:
     project_name: str
     folder_id: str
 
-    def build_query(self) -> str:
+
+    @staticmethod
+    def build_query() -> str:
         """Build the GraphQL query string.
 
         Returns:
@@ -22,48 +27,89 @@ class GraphQLQuery:
 
         """
         return """
-        query MyQuery($projectName: String!, $folderId: String!) {
-          project(name: $projectName) {
-            folder(id: $folderId) {
-              id
-              name
-              path
-              folderType
-              products {
-                edges {
-                  node {
-                    id
-                    productType
-                    productBaseType
-                    path
-                    name
-                    data
-                    active
-                    type
-                  }
-                }
-              }
-              tasks {
-                edges {
-                  node {
-                    id
-                    label
-                    name
-                    path
-                    status
-                    tags
-                    taskType
-                    updatedAt
-                  }
-                }
-              }
+query FetchData($projectName: String!, $folderId: String!) {
+    project(name: $projectName) {
+    folder(id: $folderId) {
+        id
+        name
+        path
+        folderType
+        products {
+            edges {
+            node {
+                id
+                productType
+                productBaseType
+                path
+                name
+                data
+                active
+                type
+                tags
+                status
             }
-          }
+            }
         }
+        tasks {
+            edges {
+            node {
+                id
+                label
+                name
+                path
+                status
+                tags
+                taskType
+                updatedAt
+                active
+                allAttrib
+                assignees
+                createdAt
+                data
+                versions {
+                edges {
+                    node {
+                    allAttrib
+                    active
+                    data
+                    author
+                    createdAt
+                    id
+                    name
+                    parents
+                    path
+                    version
+                    updatedAt
+                    tags
+                    status
+                    productId
+                    product {
+                        productType
+                        projectName
+                        updatedAt
+                        data
+                        active
+                    }
+                    }
+                }
+                }
+            }
+            }
+        }
+        allAttrib
+        }
+        allAttrib
+    }
+    }
         """
 
     def get_variables(self) -> dict[str, str]:
-        """Get query variables."""
+        """Get query variables.
+
+        Returns:
+            Dictionary of query variables
+
+        """
         return {
             "projectName": self.project_name,
             "folderId": self.folder_id
@@ -86,15 +132,24 @@ class GraphQLClient:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
-        """Async context manager entry."""
+        """Async context manager entry.
+
+        Returns:
+            GraphQLClient instance
+
+        """
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+            self,
+            exc_type: Optional[type[BaseException]],
+            exc_val: Optional[BaseException],
+            exc_tb: Optional[TracebackType]):
         """Async context manager exit."""
         await self.close()
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the HTTP session."""
         if self._session is None:
             headers = {
@@ -107,7 +162,7 @@ class GraphQLClient:
                 timeout=timeout
             )
 
-    async def close(self):
+    async def close(self)  -> None:
         """Close the HTTP session."""
         if self._session:
             await self._session.close()
@@ -132,23 +187,27 @@ class GraphQLClient:
             "variables": query.get_variables()
         }
 
+        if  not self._session:
+            logger.error("HTTP session is not initialized")
+            return None
+
         try:
             async with self._session.post(
                 self.graphql_endpoint,
                 json=payload
             ) as response:
-                if response.status == 200:
+                if response.ok:
                     result = await response.json()
                     if "errors" in result:
                         logger.error(f"GraphQL errors: {result['errors']}")
                         return None
                     return result.get("data")
                 logger.error(f"HTTP error {response.status}: "
-                             f"{await response.text()}")
+                                f"{await response.text()}")
                 return None
 
-        except Exception as e:
-            logger.error(f"GraphQL query failed: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"GraphQL query failed: {e}")
             return None
 
     async def fetch_folder_data(

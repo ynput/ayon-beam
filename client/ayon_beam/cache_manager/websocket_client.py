@@ -61,15 +61,15 @@ class InvalidationEvent:
         """
         entity_type = cls._entity_type_from_topic(data.get("topic", ""))
         if entity_type == "folder":
-            data["folder_id"] = data["summary"].get("entity_id")
+            data["folder_id"] = data["summary"].get("entityId")
 
         if entity_type == "task":
-            data["task_id"] = data["summary"].get("entity_id")
+            data["task_id"] = data["summary"].get("entityId")
 
         return cls(
             event_type=data.get("topic", ""),
             project_name=data.get("project", ""),
-            entity_id=data["summary"].get("entity_id"),
+            entity_id=data["summary"].get("entityId"),
             timestamp=data.get("timestamp")
         )
 
@@ -148,7 +148,7 @@ class WebSocketClient:
             }
 
             if data.get("topic") in invalidation_topics:
-                event = InvalidationEvent.from_dict(data.get("payload", {}))
+                event = InvalidationEvent.from_dict(data)
                 logger.debug(
                     f"Received invalidation event: {event.event_type} "
                     f"for {event.project_name}")
@@ -160,13 +160,16 @@ class WebSocketClient:
             for handler in self._event_handlers:
                 try:
                     handler(event)
-                except Exception as e:
-                    logger.error(f"Error in event handler: {e}")
+                except Exception as e:  # noqa: BLE001, PERF203
+                    logger.error(f"Message: {message}")
+                    logger.exception(f"Error in event handler: {e}")
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse WebSocket message: {e}")
-        except Exception as e:
-            logger.error(f"Error handling WebSocket message: {e}")
+            logger.error(f"Message: {message}")
+            logger.exception(f"Failed to decode WebSocket message: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Message: {message}")
+            logger.exception(f"Error handling WebSocket message: {e}")
 
     async def _connect(self) -> bool:
         """Establish WebSocket connection.
@@ -194,7 +197,7 @@ class WebSocketClient:
                 subscribe_data, text=True)  # Subscribe to all entity events
             logger.info(f"Connected to WebSocket at {self.ws_url}")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to connect to WebSocket: {e}")
             return False
         return True
@@ -205,14 +208,14 @@ class WebSocketClient:
             return
         try:
             async for message in self._websocket:
-                logger.debug(f"WebSocket message received: {message}")
-                await self._handle_message(message)
+                # logger.debug(f"WebSocket message received: {message}")
+                await self._handle_message(message)  # pyright: ignore[reportArgumentType]
 
         except ConnectionClosed:
             logger.warning("WebSocket connection closed")
         except WebSocketException as e:
             logger.error(f"WebSocket error: {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Unexpected error in WebSocket listener: {e}")
 
     async def start(self) -> None:
@@ -236,9 +239,10 @@ class WebSocketClient:
                 # Exponential backoff with max limit
                 reconnect_delay = min(
                     reconnect_delay * 2, self._max_reconnect_delay)
-                logger.debug(f"Next reconnect delay: {reconnect_delay} seconds")
+                logger.debug(
+                    f"Next reconnect delay: {reconnect_delay} seconds")
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f"WebSocket client error: {e}")
                 await asyncio.sleep(reconnect_delay)
 
