@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ayon_core.addon import AYONAddon, IPluginPaths, ITrayService
 from loguru import logger
@@ -11,15 +11,18 @@ from loguru import logger
 from .cache_manager import CacheService, CacheServiceConfig, RateLimitConfig
 from .version import __version__
 
+if TYPE_CHECKING:
+    from ayon_core.addon import AddonsManager
+
 
 class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
     """Beam addon for AYON - Smart caching and entity-centric API."""
 
     version = __version__
 
-    def __init__(self):
+    def __init__(self, addon_manager: AddonsManager, settings: dict[str, Any]):
         """Initialize the Beam addon."""
-        super().__init__()
+        super().__init__(addon_manager, settings)
         self._cache_service: Optional[CacheService] = None
         self._cache_task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
