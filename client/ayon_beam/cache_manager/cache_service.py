@@ -13,6 +13,7 @@ from loguru import logger
 
 from .graphql_client import GraphQLClient
 from .memcached_client import MemcachedClient
+from .null_client import NullCacheClient
 from .prefetcher import Prefetcher
 from .rate_limiter import RateLimitConfig, RateLimiter
 from .websocket_client import InvalidationEvent, WebSocketClient
@@ -60,8 +61,14 @@ class CacheService:
 
         # Initialize components
         self.graphql_client = GraphQLClient(config.server_url, config.api_key)
-        self.memcache_client = MemcachedClient(
-            config.memcache_host, config.memcache_port)
+        try:
+            self.cache_client = MemcachedClient(
+                config.memcache_host, config.memcache_port)
+        except Exception as e:
+            logger.exception(f"Failed to initialize Memcached client: {e}")
+            self.cache_client = NullCacheClient()
+            logger.warning("Using NullCacheClient, caching is disabled")
+
         self.websocket_client = (WebSocketClient
                                  (config.server_url, config.api_key))
         self.rate_limiter = RateLimiter(config.rate_limit_config)
@@ -99,7 +106,7 @@ class CacheService:
 
         try:
             # Connect to memcached
-            self.memcache_client.connect()
+            self.cache_client.connect()
 
             # Start GraphQL client
             await self.graphql_client.start()
@@ -119,7 +126,13 @@ class CacheService:
         except Exception as e:
             logger.error(f"Failed to start cache service: {e}")
             await self.stop()
-            raise
+            if not isinstance(self.cache_client, NullCacheClient):
+                # try with NullCacheClient
+                self.cache_client = NullCacheClient()
+                logger.warning("Using NullCacheClient, caching is disabled")
+                await self.start()
+            else:
+                raise
 
     async def stop(self) -> None:
         """Stop the cache service."""
@@ -148,7 +161,7 @@ class CacheService:
 
         # Close connections
         await self.graphql_client.close()
-        self.memcache_client.disconnect()
+        self.cache_client.disconnect()
 
         logger.info("Cache service stopped")
 
@@ -170,7 +183,7 @@ class CacheService:
         """
         # Try cache first unless force refresh
         if not force_refresh:
-            cached_data = self.memcache_client.get_folder_data(
+            cached_data = self.cache_client.get_folder_data(
                 project_name, folder_id)
             if cached_data:
                 self.stats["cache_hits"] += 1
@@ -192,7 +205,7 @@ class CacheService:
                 project_name, folder_id)
             if data:
                 # Store in cache
-                self.memcache_client.set_folder_data(
+                self.cache_client.set_folder_data(
                     project_name,
                     folder_id,
                     data,
@@ -233,7 +246,7 @@ class CacheService:
             return False
 
         # Check if data is already fresh in cache
-        cached_data = self.memcache_client.get_folder_data(
+        cached_data = self.cache_client.get_folder_data(
             project_name, folder_id)
         if cached_data:
             # Could check timestamp here to determine if refresh is needed
@@ -251,7 +264,7 @@ class CacheService:
 
         ids_to_fetch = self.prefetcher.prefetch()
         seed = {}
-        for project_name, folder_id in ids_to_fetch:
+        for project_name, folder_id in ids_to_fetch.folder_requests:
             if project_name not in seed:
                 seed[project_name] = set()
             seed[project_name].add(folder_id)
@@ -286,8 +299,10 @@ class CacheService:
 
         # Collect all folder tasks
         fetch_tasks = []
+        fetch_projects: set[str] = set()
 
         for project_name in self.config.projects_to_cache:
+            fetch_projects.add(project_name)
             folder_ids = self.config.folders_to_cache.get(project_name, [])
 
             for folder_id in folder_ids:
@@ -318,6 +333,10 @@ class CacheService:
                     if not task.done():
                         task.cancel()
 
+        if fetch_projects:
+            logger.info(
+                f"Prefetch cycle done for {len(fetch_projects)} projects")
+
     def _handle_invalidation_event(self, event: InvalidationEvent) -> None:
         """Handle cache invalidation events from WebSocket.
 
@@ -332,13 +351,13 @@ class CacheService:
             if event.event_type.startswith(
                     "entity.folder") and event.entity_id:
                 # Invalidate specific folder
-                self.memcache_client.invalidate_folder(
+                self.cache_client.invalidate_folder(
                     event.project_name, event.entity_id)
                 self.stats["invalidations"] += 1
 
             elif event.event_type.startswith("entity.project"):
                 # Invalidate entire project
-                count = self.memcache_client.invalidate_project(
+                count = self.cache_client.invalidate_project(
                     event.project_name)
                 self.stats["invalidations"] += count
 
@@ -383,7 +402,7 @@ class CacheService:
             del self.config.folders_to_cache[project_name]
 
         # Invalidate cached data
-        self.memcache_client.invalidate_project(project_name)
+        self.cache_client.invalidate_project(project_name)
 
         logger.info(f"Removed project {project_name} from cache")
 
@@ -397,7 +416,7 @@ class CacheService:
         return {
             "service_stats": self.stats,
             "rate_limiter_stats": self.rate_limiter.get_stats(),
-            "memcache_stats": self.memcache_client.get_cache_stats(),
+            "memcache_stats": self.cache_client.get_cache_stats(),
             "websocket_connected": self.websocket_client.is_connected(),
             "running": self._running,
             "configured_projects": len(self.config.projects_to_cache),
@@ -493,7 +512,7 @@ class CacheService:
             del self.config.folders_to_cache[project_name]
 
             # Invalidate cached data for the project
-            self.memcache_client.invalidate_project(project_name)
+            self.cache_client.invalidate_project(project_name)
             logger.info(
                 "Removed entire project "
                 f"{project_name} from cache configuration")
@@ -503,7 +522,7 @@ class CacheService:
                 if folder_id in self.config.folders_to_cache[project_name]:
                     self.config.folders_to_cache[project_name].remove(folder_id)
                     # Invalidate cached data for the specific folder
-                    self.memcache_client.invalidate_folder(
+                    self.cache_client.invalidate_folder(
                         project_name, folder_id)
 
             # Remove project if no folders left

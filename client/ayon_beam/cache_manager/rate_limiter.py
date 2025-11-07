@@ -11,7 +11,7 @@ import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -111,10 +111,10 @@ class RateLimiter:
         )
 
         # Per-project rate limiters
-        self.project_buckets: Dict[str, TokenBucket] = {}
+        self.project_buckets: dict[str, TokenBucket] = {}
 
         # Cool-down tracking
-        self.cooldown_until: Dict[str, float] = defaultdict(float)
+        self.cooldown_until: dict[str, float] = defaultdict(float)
 
         # Statistics
         self.stats = {
@@ -180,12 +180,12 @@ class RateLimiter:
         project_acquired = await project_bucket.wait_for_tokens(1, timeout)
         if not project_acquired:
             logger.debug(
-                "Request rejected: project %s rate limit", project_name)
+                f"Request rejected: project {project_name} rate limit")
             self.stats["rejected_requests"] += 1
             self._activate_cooldown(project_name)
             return False
 
-        logger.debug("Request approved for project %s", project_name)
+        logger.debug(f"Request approved for project {project_name}")
         return True
 
     def _activate_cooldown(self, key: str) -> None:
@@ -223,7 +223,7 @@ class RateLimiter:
 
         return global_available and project_available
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get rate limiter statistics.
 
         Returns:

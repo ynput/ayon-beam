@@ -325,7 +325,7 @@ class CacheConfigManager:
             prefetch_ids = Prefetcher(user=current_user["name"]).prefetch()
             return_ids = [
                 prefetch_data.folder_id
-                for prefetch_data in prefetch_ids
+                for prefetch_data in prefetch_ids.folder_requests
                 if prefetch_data.project_name == project_name
             ]
         except Exception as e:  # noqa: BLE001

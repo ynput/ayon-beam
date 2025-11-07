@@ -17,7 +17,6 @@ class GraphQLQuery:
     project_name: str
     folder_id: str
 
-
     @staticmethod
     def build_query() -> str:
         """Build the GraphQL query string.

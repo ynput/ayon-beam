@@ -348,3 +348,55 @@ class MemcachedClient(CacheClient):
                 whose cache entries should be invalidated.
         """
         self.invalidate_project(project_name)
+
+    def get_project_data(
+            self,
+            project_name: str) -> Optional[dict[str, Any]]:
+        """Retrieve project data from the cache.
+
+        Args:
+            project_name: Name of the project.
+
+        Returns:
+            Cached project data or None if not found.
+
+        """
+        if not self._client:
+            logger.error("Not connected to memcached")
+            return None
+
+        return self._client.get(project_name)
+
+    def set_project_data(
+            self,
+            project_name: str,
+            data: dict[str, Any],
+            ttl: int = 3600) -> bool:
+        """Store project data in the cache.
+
+        Args:
+            project_name: Name of the project.
+            data: Project data to cache.
+            ttl: Time to live in seconds (default is 3600 seconds).
+
+        Returns:
+            True if stored successfully, False otherwise.
+
+        """
+        if not self._client:
+            logger.error("Not connected to memcached")
+            return False
+
+        try:
+            success = self._client.set(
+                key=project_name,
+                value=data,
+                expire=ttl
+            )
+            if success:
+                logger.debug(f"Stored project data for {project_name}")
+                return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to store project data: {e}")
+
+        return False

@@ -16,10 +16,21 @@ from typing import NamedTuple, TypedDict
 import ayon_api
 
 
-class PrefetchRequest(NamedTuple):
+class PrefetchFolderRequest(NamedTuple):
     """Structure representing a prefetch request."""
     project_name: str
     folder_id: str
+
+
+class PrefetchProjectRequest(NamedTuple):
+    """Structure representing a prefetch request."""
+    project_name: str
+
+
+class PrefetchRequests(NamedTuple):
+    """Structure representing prefetch requests."""
+    folder_requests: set[PrefetchFolderRequest]
+    project_requests: set[PrefetchProjectRequest]
 
 
 class PrefetchError(Exception):
@@ -115,7 +126,8 @@ class Prefetcher:
 
         return assigned_tasks
 
-    def prefetch_user_folders(self, user_name: str) -> set[PrefetchRequest]:
+    def prefetch_user_folders(
+            self, user_name: str) -> set[PrefetchFolderRequest]:
         """Prefetch folder hierarchy for all tasks assigned to a user.
 
         This takes all folders associated with tasks assigned to the user
@@ -134,10 +146,11 @@ class Prefetcher:
         folder_ids_to_prefetch = set()
         for task in assigned_tasks:
             folder_ids_to_prefetch.add(
-                PrefetchRequest(task["project_name"], task["folder_id"]))
+                PrefetchFolderRequest(task["project_name"], task["folder_id"]))
             if task["parent_id"]:
                 folder_ids_to_prefetch.add(
-                    PrefetchRequest(task["project_name"], task["parent_id"]))
+                    PrefetchFolderRequest(
+                        task["project_name"], task["parent_id"]))
                 # fetch parent folders recursively if needed
                 parent_id = task["parent_id"]
                 while parent_id:
@@ -146,13 +159,13 @@ class Prefetcher:
                     if folder_data and folder_data.get("parentId"):
                         parent_id = folder_data["parentId"]
                         folder_ids_to_prefetch.add(
-                            PrefetchRequest(
+                            PrefetchFolderRequest(
                                 task["project_name"], parent_id))
                     else:
                         break
         return folder_ids_to_prefetch
 
-    def prefetch(self) -> set[PrefetchRequest]:
+    def prefetch(self) -> PrefetchRequests:
         """Prefetch folder hierarchy for the initialized user.
 
         This takes all folders associated with tasks assigned to the user
@@ -162,4 +175,10 @@ class Prefetcher:
             A set of folder IDs that were prefetched.
 
         """
-        return self.prefetch_user_folders(self._user)
+        folder_requests = self.prefetch_user_folders(self._user)
+        project_requests = {
+            PrefetchProjectRequest(request.project_name)
+            for request in folder_requests
+        }
+
+        return PrefetchRequests(folder_requests, project_requests)

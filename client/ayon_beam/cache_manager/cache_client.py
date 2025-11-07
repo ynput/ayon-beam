@@ -87,6 +87,38 @@ class CacheClient(Protocol):
         """
         ...
 
+    def get_project_data(
+            self,
+            project_name: str) -> Optional[dict[str, Any]]:
+        """Retrieve project data from the cache.
+
+        Args:
+            project_name: Name of the project.
+
+        Returns:
+            Cached project data or None if not found.
+
+        """
+        ...
+
+    def set_project_data(
+            self,
+            project_name: str,
+            data: dict[str, Any],
+            ttl: int = 3600) -> bool:
+        """Store project data in the cache.
+
+        Args:
+            project_name: Name of the project.
+            data: Project data to cache.
+            ttl: Time to live in seconds (default is 3600 seconds).
+
+        Returns:
+            True if stored successfully, False otherwise.
+
+        """
+        ...
+
     def invalidate_project_cache(self, project_name: str) -> None:
         """Invalidate all cache entries related to a specific project.
 
@@ -113,6 +145,18 @@ class CacheClient(Protocol):
 
         Returns:
             True if the cache was successfully cleared.
+
+        """
+        ...
+
+    def invalidate_project(self, project_name: str) -> bool:
+        """Invalidate cached data for a specific project.
+
+        Args:
+            project_name: Name of the project.
+
+        Returns:
+            True if invalidated successfully.
 
         """
         ...
