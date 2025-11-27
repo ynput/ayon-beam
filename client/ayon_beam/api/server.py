@@ -62,7 +62,6 @@ class ServerContext(Entity):
     """
     connection: Optional[ServerConnection] = None
 
-
     def is_connected(self) -> bool:
         """Check if the server connection is established.
 

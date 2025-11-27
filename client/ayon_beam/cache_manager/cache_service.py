@@ -226,6 +226,61 @@ class CacheService:
                 f"Error fetching data for {project_name}:{folder_id}: {e}")
 
         return None
+    
+    async def get_project_data(
+            self,
+            project_name: str,
+            force_refresh: bool = False) -> Optional[dict[str, Any]]:
+        """Get project data from cache or fetch from server.
+
+        Args:
+            project_name: Name of the project
+
+        Returns:
+            Project data with folders, products, and tasks
+        """
+        if not force_refresh:
+            cached_data = self.cache_client.get_project_data(
+                project_name)
+            if cached_data:
+                self.stats["cache_hits"] += 1
+                logger.debug(f"Cache hit for {project_name}")
+                return cached_data
+
+        self.stats["cache_misses"] += 1
+        logger.debug(f"Cache miss for {project_name}, fetching from server")
+
+        # Fetch from server with rate limiting
+        if not await self.rate_limiter.acquire(project_name):
+            logger.warning(
+                f"Rate limit exceeded for {project_name}, cannot fetch data")
+            return None
+
+        try:
+            data = await self.graphql_client.fetch_project_data(
+                project_name)
+            if data:
+                # Store in cache
+                self.cache_client.set_project_data(
+                    project_name,
+                    data,
+                    self.config.default_ttl
+                )
+                self.stats["fetch_successes"] += 1
+                logger.debug("Fetched and cached data for "
+                             f"{project_name}")
+                return data
+
+            self.stats["fetch_failures"] += 1
+            logger.warning(
+                f"Failed to fetch data for {project_name}")
+
+        except Exception as e:  # noqa: BLE001
+            self.stats["fetch_failures"] += 1
+            logger.error(
+                f"Error fetching data for {project_name}: {e}")
+
+        return None
 
     async def prefetch_folder_data(
             self, project_name: str, folder_id: str) -> bool:
@@ -246,17 +301,25 @@ class CacheService:
             return False
 
         # Check if data is already fresh in cache
-        cached_data = self.cache_client.get_folder_data(
+        cached_folder_data = self.cache_client.get_folder_data(
             project_name, folder_id)
-        if cached_data:
+        cached_project_data = self.cache_client.get_project_data(
+            project_name)
+        if cached_folder_data or cached_project_data:
             # Could check timestamp here to determine if refresh is needed
             logger.debug(
                 f"Data already cached for {project_name}:{folder_id}")
             return True
 
+        project_result = None
+        folder_result = None
         # Fetch with rate limiting
-        result = await self.get_folder_data(project_name, folder_id)
-        return result is not None
+        if not cached_project_data:
+            project_result = await self.get_project_data(project_name)
+        if not cached_folder_data:
+            folder_result = await self.get_folder_data(project_name, folder_id)
+
+        return (project_result is not None) or (folder_result is not None)
 
     async def seed_cache(self) -> None:
         """Seed the cache with initial data for configured projects/folders."""
@@ -565,10 +628,15 @@ class CacheService:
             for folder_id in target_folders:
                 if folder_id in self.config.folders_to_cache.get(
                         project_name, []):
-                    task = asyncio.create_task(
+                    
+                    project_task = asyncio.create_task(
+                        self.prefetch_project_data(project_name, folder_id)
+                    )
+                    folder_task = asyncio.create_task(
                         self.prefetch_folder_data(project_name, folder_id)
                     )
-                    fetch_tasks.append(task)
+                    fetch_tasks.append(folder_task)
+
         else:
             # Prefetch all configured projects/folders
             for proj_name in self.config.projects_to_cache:

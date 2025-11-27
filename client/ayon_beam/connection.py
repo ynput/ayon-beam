@@ -73,7 +73,7 @@ class ServerConnection:
         """
         payload = {"query": query}
         if variables:
-            payload["variables"] = variables
+            payload["variables"]: dict[str, Any] = variables
 
         response = self.post("graphql", json=payload)
         response.raise_for_status()

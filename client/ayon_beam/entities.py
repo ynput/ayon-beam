@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from arrow import Arrow
+
+if TYPE_CHECKING:
+    from ayon_beam.cache_manager import CacheManager
+    from ..entities import Entity
+    from .server import ServerContext
 
 
 @dataclass
@@ -19,6 +24,10 @@ class Lifecycle:
     retrieved_at: Arrow
     from_cache: bool
     expired: bool
+
+    cache_manager: Optional[CacheManager] = field(
+        init=False, default=None, repr=False
+    )
 
     _entity_ref: Optional[Entity] = field(
         init=False, default=None, repr=False
@@ -40,3 +49,9 @@ class Entity:
     """Base class for AYON entities."""
     Lifecycle: Lifecycle
     id: str = field(init=False, default="", repr=True)
+
+
+@dataclass
+class ProjectEntity(Entity):
+    """Base class for AYON project-scoped entities."""
+    project_name: str

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 import aiohttp
 from loguru import logger
@@ -11,8 +11,121 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
+class GraphQLQuery(Protocol):
+    """GraphQL query protocol."""
+
+    @staticmethod
+    def build_query() -> str:
+        """Build the GraphQL query string.
+
+        Returns:
+            GraphQL query string
+
+        """
+        ...
+
+    def get_variables(self) -> dict[str, Any]:
+        """Get query variables.
+
+        Returns:
+            Dictionary of query variables
+
+        """
+        ...
+
+
 @dataclass
-class GraphQLQuery:
+class GraphQLProjectQuery(GraphQLQuery):
+    """GraphQL project query configuration."""
+    project_name: str
+
+    @staticmethod
+    def build_query() -> str:
+        """Build the GraphQL query string.
+
+        Returns:
+            GraphQL query string
+
+        """
+        return """
+query FetchProject($projectName: String!) {
+    project(name: $projectName) {
+
+        name
+    code
+    config
+    createdAt
+    data
+    active
+    projectName
+    library
+    statuses {
+      color
+      icon
+      name
+      scope
+      shortName
+      state
+    }
+    bundle {
+      production
+      staging
+    }
+    entityLists {
+      edges {
+        node {
+          id
+        }
+      }
+    }
+    folderTypes {
+      icon
+      name
+      shortName
+    }
+    linkTypes {
+      color
+      inputType
+      linkType
+      name
+      outputType
+      style
+    }
+    productTypes {
+      color
+      icon
+      name
+    }
+    tags {
+      color
+      name
+    }
+    taskTypes {
+      color
+      icon
+      name
+      shortName
+    }
+    updatedAt
+    usedTags
+    }
+}
+"""
+
+    def get_variables(self) -> dict[str, str]:
+        """Get query variables.
+
+        Returns:
+            Dictionary of query variables
+
+        """
+        return {
+            "projectName": self.project_name
+        }
+
+
+@dataclass
+class GraphQLDataQuery:
     """GraphQL query configuration."""
     project_name: str
     folder_id: str
@@ -221,10 +334,30 @@ class GraphQLClient:
         Returns:
             Folder data with products and tasks
         """
-        query = GraphQLQuery(project_name, folder_id)
+        query = GraphQLDataQuery(project_name, folder_id)
         data = await self.execute_query(query)
 
         if data and "project" in data and data["project"]:
             return data["project"]["folder"]
+
+        return None
+
+    async def fetch_project_data(
+            self,
+            project_name: str) -> Optional[dict[str, Any]]:
+        """Fetch data for a specific project.
+
+        Args:
+            project_name: Name of the project
+
+        Returns:
+            Project data or None if failed
+
+        """
+        query = GraphQLProjectQuery(project_name)
+        data = await self.execute_query(query)
+
+        if data and "project" in data and data["project"]:
+            return data["project"]
 
         return None

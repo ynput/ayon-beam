@@ -251,6 +251,22 @@ class BeamAddon(AYONAddon, IPluginPaths, ITrayService):
 
         return await self._cache_service.get_folder_data(
             project_name, folder_id)
+    
+    async def get_project_data(
+            self, project_name: str) -> Optional[dict[str, Any]]:
+        """Get project data through the cache service.
+
+        Args:
+            project_name: Name of the project
+        
+        Returns:
+            Project data with folders, products, and tasks
+        """
+        if not self._cache_service:
+            self.log.error("Cache service not available")
+            return None
+        
+        return await self._cache_service.get_project_data(project_name)
 
     def get_service_stats(self) -> dict[str, Any]:
         """Get comprehensive service statistics.
